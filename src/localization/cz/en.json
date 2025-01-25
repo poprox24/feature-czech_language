@@ -350,41 +350,41 @@
                         "notification_timeout": "Časový limit oznámení"
                     },
                     "conditions": {
-                        "never": "Never",
-                        "desktop": "Desktop Mode",
-                        "inside_vr": "Inside VR",
-                        "outside_vr": "Outside VR",
-                        "inside_vrchat": "Inside VRChat",
-                        "outside_vrchat": "Outside VRChat",
-                        "always": "Always"
+                        "never": "Nikdy",
+                        "desktop": "Desktopový režim",
+                        "inside_vr": "Uvnitř VR",
+                        "outside_vr": "Mimo VR",
+                        "inside_vrchat": "Uvnitř VRChat",
+                        "outside_vrchat": "Mimo VRChat",
+                        "always": "Vždy"
                     },
                     "desktop_notifications": {
-                        "header": "Desktop Notifications",
-                        "when_to_display": "When to display",
-                        "desktop_notification_while_afk": "Desktop Notifications While AFK"
+                        "header": "Desktopé upozornění",
+                        "when_to_display": "Kdy zobrazit",
+                        "desktop_notification_while_afk": "Desktopové upozornění když jste AFK"
                     },
                     "text_to_speech": {
                         "header": "Text-To-Speech",
-                        "when_to_play": "Notification TTS. When to play",
-                        "tts_voice": "TTS Voice",
-                        "use_memo_nicknames": "Use Memo Nicknames",
-                        "play": "Play",
-                        "tts_test_placeholder": "Test TTS"
+                        "when_to_play": "Upozornění TTS. Kdy zahrát",
+                        "tts_voice": "TTS Hlas",
+                        "use_memo_nicknames": "Používat poznámkové nicknames",
+                        "play": "Zahrát",
+                        "tts_test_placeholder": "Testovat TTS"
                     }
                 }
             },
             "wrist_overlay": {
                 "steamvr_wrist_overlay": {
-                    "header": "SteamVR Wrist Overlay",
-                    "description": "* Runs automatically while VRChat is running.",
+                    "header": "SteamVR Náramkový Overlay",
+                    "description": "* Spustí se automaticky když je spuštěn VRChat.",
                     "grip": "Grip: Vive or Other Controllers Grab, Oculus X/A Buttons",
                     "menu": "Menu: Vive Menu, Index B, Oculus Y/B Buttons",
                     "steamvr_overlay": "SteamVR Overlay",
-                    "wrist_feed_overlay": "Wrist Feed Overlay",
-                    "hide_private_worlds": "Hide Private Worlds",
-                    "start_overlay_with": "Start Overlay With",
-                    "overlay_button": "Overlay Button",
-                    "overlay_button_grip": "Grip",
+                    "wrist_feed_overlay": "Náramkový overlay zdroje",
+                    "hide_private_worlds": "Schovat soukromé světy",
+                    "start_overlay_with": "Spustit Overlay S",
+                    "overlay_button": "Overlay Tlačítko",
+                    "overlay_button_grip": "Stisk",
                     "overlay_button_menu": "Menu",
                     "display_overlay_on": "Display Overlay On",
                     "display_overlay_on_left": "Left Hand",
