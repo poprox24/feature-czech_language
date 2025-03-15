@@ -1,4 +1,4 @@
-// Copyright(c) 2019-2024 pypy, Natsumi and individual contributors.
+// Copyright(c) 2019-2025 pypy, Natsumi and individual contributors.
 // All rights reserved.
 //
 // This work is licensed under the terms of the MIT license.
@@ -18,6 +18,8 @@ import MarqueeText from 'vue-marquee-text-component';
 import * as localizedStrings from './localization/localizedStrings.js';
 
 import $utils from './classes/utils.js';
+
+import pugTemplate from './vr.pug';
 
 Vue.component('marquee-text', MarqueeText);
 
@@ -124,6 +126,7 @@ Vue.component('marquee-text', MarqueeText);
     });
 
     const app = {
+        template: pugTemplate,
         i18n,
         data: {
             // 1 = 대시보드랑 손목에 보이는거
@@ -169,7 +172,7 @@ Vue.component('marquee-text', MarqueeText);
             ...$utils
         },
         watch: {},
-        el: '#x-app',
+        el: '#root',
         async mounted() {
             this.isRunningUnderWine = await AppApiVr.IsRunningUnderWine();
             await this.applyWineEmojis();

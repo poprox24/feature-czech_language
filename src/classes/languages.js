@@ -1,4 +1,5 @@
 import { baseClass, $app, API, $t, $utils } from './baseClass.js';
+import { userRequest } from './request';
 
 export default class extends baseClass {
     constructor(_app, _API, _t) {
@@ -108,7 +109,6 @@ export default class extends baseClass {
             visible: false,
             loading: false,
             languageChoice: false,
-            languageValue: '',
             languages: []
         }
     };
@@ -129,26 +129,30 @@ export default class extends baseClass {
             if (language !== String(language)) {
                 return;
             }
-            var D = this.languageDialog;
+            const D = this.languageDialog;
             D.loading = true;
-            API.addUserTags({
-                tags: [`language_${language}`]
-            }).finally(function () {
-                D.loading = false;
-            });
+            userRequest
+                .addUserTags({
+                    tags: [`language_${language}`]
+                })
+                .finally(function () {
+                    D.loading = false;
+                });
         },
 
         removeUserLanguage(language) {
             if (language !== String(language)) {
                 return;
             }
-            var D = this.languageDialog;
+            const D = this.languageDialog;
             D.loading = true;
-            API.removeUserTags({
-                tags: [`language_${language}`]
-            }).finally(function () {
-                D.loading = false;
-            });
+            userRequest
+                .removeUserTags({
+                    tags: [`language_${language}`]
+                })
+                .finally(function () {
+                    D.loading = false;
+                });
         },
 
         showLanguageDialog() {

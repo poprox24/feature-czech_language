@@ -1,4 +1,5 @@
 import { baseClass, $app, API, $t, $utils } from './baseClass.js';
+import { userRequest } from './request';
 
 export default class extends baseClass {
     constructor(_app, _API, _t) {
@@ -185,23 +186,33 @@ export default class extends baseClass {
             }
 
             const notiConditions = {
-                'Always': () => true,
+                Always: () => true,
                 'Inside VR': () => this.isSteamVRRunning,
                 'Outside VR': () => !this.isSteamVRRunning,
                 'Game Closed': () => !this.isGameRunning, // Also known as "Outside VRChat"
                 'Game Running': () => this.isGameRunning, // Also known as "Inside VRChat"
                 'Desktop Mode': () => this.isGameNoVR && this.isGameRunning,
-                'AFK': () => this.afkDesktopToast && this.isHmdAfk && this.isGameRunning && !this.isGameNoVR,
+                AFK: () =>
+                    this.afkDesktopToast &&
+                    this.isHmdAfk &&
+                    this.isGameRunning &&
+                    !this.isGameNoVR
             };
 
-            const playNotificationTTS = notiConditions[this.notificationTTS]?.();
-            const playDesktopToast = notiConditions[this.desktopToast]?.() || notiConditions['AFK']();
+            const playNotificationTTS =
+                notiConditions[this.notificationTTS]?.();
+            const playDesktopToast =
+                notiConditions[this.desktopToast]?.() ||
+                notiConditions['AFK']();
 
             const playOverlayToast = notiConditions[this.overlayToast]?.();
-            const playOverlayNotification = this.overlayNotifications && playOverlayToast;
+            const playOverlayNotification =
+                this.overlayNotifications && playOverlayToast;
             const playXSNotification = this.xsNotifications && playOverlayToast;
-            const playOvrtHudNotifications = this.ovrtHudNotifications && playOverlayToast;
-            const playOvrtWristNotifications = this.ovrtWristNotifications && playOverlayToast;
+            const playOvrtHudNotifications =
+                this.ovrtHudNotifications && playOverlayToast;
+            const playOvrtWristNotifications =
+                this.ovrtWristNotifications && playOverlayToast;
 
             var message = '';
             if (noty.title) {
@@ -316,9 +327,10 @@ export default class extends baseClass {
             } else if (noty.imageUrl) {
                 imageUrl = noty.imageUrl;
             } else if (userId && !userId.startsWith('grp_')) {
-                imageUrl = await API.getCachedUser({
-                    userId
-                })
+                imageUrl = await userRequest
+                    .getCachedUser({
+                        userId
+                    })
                     .catch((err) => {
                         console.error(err);
                         return '';
@@ -1299,7 +1311,11 @@ export default class extends baseClass {
             if (WINDOWS) {
                 AppApi.DesktopNotification(displayName, message, image);
             } else {
-                window.electron.desktopNotification(displayName, message, image);
+                window.electron.desktopNotification(
+                    displayName,
+                    message,
+                    image
+                );
             }
         },
 

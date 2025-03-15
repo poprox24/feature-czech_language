@@ -1468,6 +1468,9 @@ img.x-link.el-popover__reference {
     [style='flex: 1 1 0%; display: flex; align-items: center; margin-left: 15px;']
     > :last-child {
     width: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 [style='flex: 0 0 auto; margin-left: 10px;'] > .el-dropdown {
     margin: 0 !important;
@@ -2008,4 +2011,54 @@ i.x-user-status {
 
 .el-dialog__body .el-tag--mini {
     line-height: 28px;
+}
+.el-divider {
+    background-color: #606266;
+}
+.el-divider__text {
+    background: rgba(var(--md-sys-color-background));
+    color: #efefef;
+}
+.el-backtop {
+    background: var(--md-sys-color-surface-1);
+    color: rgb(var(--md-sys-color-primary));
+}
+
+// Date picker
+.el-date-table td.available:hover span {
+    color: #fff;
+}
+.el-date-table td.available:hover {
+    color: #fff
+}
+.el-date-table td.disabled div {
+    background-color: rgb(48, 46, 53)
+}
+.el-date-table td.current:not(.disabled) span
+{
+    background: var(--md-sys-color-surface-2);
+    color: #fff;
+}
+.el-date-table td.today span {
+    color: rgb(var(--md-sys-color-primary-container));
+}
+.el-year-table td .cell:hover, .el-year-table td.current:not(.disabled) .cell {
+    color:  rgb(48, 46, 53);
+}
+.el-month-table td.current:not(.disabled) .cell {
+    color:  rgb(48, 46, 53);
+}
+.el-date-picker__header-label.active, .el-date-picker__header-label:hover {
+    color:  rgb(48, 46, 53);
+}
+.el-picker-panel__icon-btn:hover {
+    color:  rgb(48, 46, 53);
+}
+.el-month-table td .cell:hover {
+    color:  rgb(48, 46, 53);
+}
+.el-skeleton.is-animated .el-skeleton__item {
+    background: linear-gradient(90deg, #302E34 25%, #423F46 37%, #302E34 63%);
+    background-size: 400% 100%;
+    animation: el-skeleton-loading 1.4s ease infinite;
 }

@@ -1,6 +1,7 @@
 import * as workerTimers from 'worker-timers';
 import configRepository from '../repository/config.js';
 import { baseClass, $app, API, $t, $utils } from './baseClass.js';
+import { userRequest, worldRequest, instanceRequest } from './request';
 
 export default class extends baseClass {
     constructor(_app, _API, _t) {
@@ -1157,14 +1158,16 @@ export default class extends baseClass {
                         fetchedAt: args.json.fetchedAt
                     }
                 });
-                this.getCachedWorld({
-                    worldId: json.world.id
-                }).then((args1) => {
-                    json.world = args1.ref;
-                    return args1;
-                });
+                worldRequest
+                    .getCachedWorld({
+                        worldId: json.world.id
+                    })
+                    .then((args1) => {
+                        json.world = args1.ref;
+                        return args1;
+                    });
                 // get queue size etc
-                this.getInstance({
+                instanceRequest.getInstance({
                     worldId: json.worldId,
                     instanceId: json.instanceId
                 });
@@ -1239,7 +1242,6 @@ export default class extends baseClass {
                     instance: this.applyInstance(json)
                 });
             }
-            $app.groupInstances.sort(this.sortGroupInstancesByInGame);
         });
 
         /**
@@ -1967,10 +1969,10 @@ export default class extends baseClass {
         },
 
         async groupOwnerChange(ref, oldUserId, newUserId) {
-            var oldUser = await API.getCachedUser({
+            var oldUser = await userRequest.getCachedUser({
                 userId: oldUserId
             });
-            var newUser = await API.getCachedUser({
+            var newUser = await userRequest.getCachedUser({
                 userId: newUserId
             });
             var oldDisplayName = oldUser?.ref?.displayName;
@@ -2084,30 +2086,49 @@ export default class extends baseClass {
             }
 
             if (groups) {
-                for (var i = 0; i < groups.length; i++) {
-                    var groupId = groups[i];
-                    var groupRef = API.cachedGroups.get(groupId);
+                const promises = groups.map(async (groupId) => {
+                    const groupRef = API.cachedGroups.get(groupId);
+
                     if (
                         typeof groupRef !== 'undefined' &&
-                        groupRef.myMember?.roleIds?.length > 0
+                        groupRef.roles?.length > 0
                     ) {
-                        continue;
+                        return;
                     }
 
                     try {
-                        var args = await API.getGroup({
+                        console.log(
+                            `Fetching group with missing roles ${groupId}`
+                        );
+                        const args = await API.getGroup({
                             groupId,
                             includeRoles: true
                         });
-                        var ref = API.applyGroup(args.json);
+                        const ref = API.applyGroup(args.json);
                         API.currentUserGroups.set(groupId, ref);
                     } catch (err) {
                         console.error(err);
                     }
-                }
+                });
+
+                await Promise.allSettled(promises);
             }
 
             this.currentUserGroupsInit = true;
+            this.getCurrentUserGroups();
+        },
+
+        async getCurrentUserGroups() {
+            var args = await API.getGroups({ userId: API.currentUser.id });
+            API.currentUserGroups.clear();
+            for (var group of args.json) {
+                var ref = API.applyGroup(group);
+                if (!API.currentUserGroups.has(group.id)) {
+                    API.currentUserGroups.set(group.id, ref);
+                }
+            }
+            await API.getGroupPermissions({ userId: API.currentUser.id });
+            this.saveCurrentUserGroups();
         },
 
         showGroupDialog(groupId) {
@@ -2162,12 +2183,14 @@ export default class extends baseClass {
                         D.ref = args.ref;
                         D.inGroup = args.ref.membershipStatus === 'member';
                         D.ownerDisplayName = args.ref.ownerId;
-                        API.getCachedUser({
-                            userId: args.ref.ownerId
-                        }).then((args1) => {
-                            D.ownerDisplayName = args1.ref.displayName;
-                            return args1;
-                        });
+                        userRequest
+                            .getCachedUser({
+                                userId: args.ref.ownerId
+                            })
+                            .then((args1) => {
+                                D.ownerDisplayName = args1.ref.displayName;
+                                return args1;
+                            });
                         this.applyGroupDialogInstances();
                         this.getGroupDialogGroup(groupId);
                     }
@@ -2715,7 +2738,7 @@ export default class extends baseClass {
             }
 
             if (userId) {
-                API.getCachedUser({ userId }).then((args) => {
+                userRequest.getCachedUser({ userId }).then((args) => {
                     D.userObject = args.ref;
                 });
                 D.userIds = [userId];
@@ -3586,7 +3609,7 @@ export default class extends baseClass {
                 return;
             }
 
-            var userArgs = await API.getCachedUser({
+            var userArgs = await userRequest.getCachedUser({
                 userId
             });
             member.userId = userArgs.json.id;

@@ -1,3 +1,5 @@
+let echarts = null;
+
 export default {
     removeFromArray(array, item) {
         var { length } = array;
@@ -40,13 +42,13 @@ export default {
         return obj;
     },
 
-    timeToText(sec) {
-        var n = Number(sec);
+    timeToText(sec, isNeedSeconds = false) {
+        let n = Number(sec);
         if (isNaN(n)) {
             return this.escapeTag(sec);
         }
         n = Math.floor(n / 1000);
-        var arr = [];
+        const arr = [];
         if (n < 0) {
             n = -n;
         }
@@ -62,7 +64,7 @@ export default {
             arr.push(`${Math.floor(n / 60)}m`);
             n %= 60;
         }
-        if (arr.length === 0 && n < 60) {
+        if (isNeedSeconds || (arr.length === 0 && n < 60)) {
             arr.push(`${n}s`);
         }
         return arr.join(' ');
@@ -84,6 +86,24 @@ export default {
         return s.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1,');
     },
 
+    isRealInstance(instanceId) {
+        if (!instanceId) {
+            return false;
+        }
+        switch (instanceId) {
+            case ':':
+            case 'offline':
+            case 'offline:offline':
+            case 'private':
+            case 'private:private':
+            case 'traveling':
+            case 'traveling:traveling':
+            case instanceId.startsWith('local'):
+                return false;
+        }
+        return true;
+    },
+
     parseLocation(tag) {
         var _tag = String(tag || '');
         var ctx = {
@@ -91,6 +111,7 @@ export default {
             isOffline: false,
             isPrivate: false,
             isTraveling: false,
+            isRealInstance: false,
             worldId: '',
             instanceId: '',
             instanceName: '',
@@ -114,7 +135,8 @@ export default {
             ctx.isPrivate = true;
         } else if (_tag === 'traveling' || _tag === 'traveling:traveling') {
             ctx.isTraveling = true;
-        } else if (_tag.startsWith('local') === false) {
+        } else if (!_tag.startsWith('local')) {
+            ctx.isRealInstance = true;
             var sep = _tag.indexOf(':');
             // technically not part of instance id, but might be there when coping id from url so why not support it
             var shortNameQualifier = '&shortName=';
@@ -299,5 +321,86 @@ export default {
             return 0;
         });
         return node;
+    },
+
+    // app.js 4900ln
+    // descending
+    compareByCreatedAt(a, b) {
+        if (
+            typeof a.created_at !== 'string' ||
+            typeof b.created_at !== 'string'
+        ) {
+            return 0;
+        }
+        var A = a.created_at.toUpperCase();
+        var B = b.created_at.toUpperCase();
+        if (A < B) {
+            return 1;
+        }
+        if (A > B) {
+            return -1;
+        }
+        return 0;
+    },
+    // lazy load echarts
+    loadEcharts() {
+        if (echarts) {
+            return Promise.resolve(echarts);
+        }
+        return import('echarts').then((module) => {
+            echarts = module;
+            return echarts;
+        });
+    },
+    // CJK character in Japanese, Korean, Chinese are different
+    // so change font-family order when users change language to display CJK character correctly
+    changeCJKorder(lang) {
+        const otherFonts = window
+            .getComputedStyle(document.body)
+            .fontFamily.split(',')
+            .filter((item) => !item.includes('Noto Sans'))
+            .join(', ');
+        const notoSans = 'Noto Sans';
+
+        const fontFamilies = {
+            ja_JP: ['JP', 'KR', 'TC', 'SC'],
+            ko: ['KR', 'JP', 'TC', 'SC'],
+            zh_TW: ['TC', 'JP', 'KR', 'SC'],
+            zh_CN: ['SC', 'JP', 'KR', 'TC']
+        };
+
+        if (fontFamilies[lang]) {
+            const CJKFamily = fontFamilies[lang]
+                .map((item) => `${notoSans} ${item}`)
+                .join(', ');
+            document.body.style.fontFamily = `${CJKFamily}, ${otherFonts}`;
+        }
+    },
+    localeIncludes(str, search, comparer) {
+        // These checks are stolen from https://stackoverflow.com/a/69623589/11030436
+        if (search === '') {
+            return true;
+        } else if (!str || !search) {
+            return false;
+        }
+        const strObj = String(str);
+        const searchObj = String(search);
+
+        if (strObj.length === 0) {
+            return false;
+        }
+
+        if (searchObj.length > strObj.length) {
+            return false;
+        }
+
+        // Now simply loop through each substring and compare them
+        for (let i = 0; i < str.length - searchObj.length + 1; i++) {
+            const substr = strObj.substring(i, i + searchObj.length);
+            if (comparer.compare(substr, searchObj) === 0) {
+                return true;
+            }
+        }
+        return false;
     }
 };

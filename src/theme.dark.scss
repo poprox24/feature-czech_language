@@ -1,7 +1,7 @@
 @charset "utf-8";
 
 //
-// Copyright(c) 2019-2021 pypy and individual contributors.
+// Copyright(c) 2019-2025 pypy and individual contributors.
 // All rights reserved.
 //
 // This work is licensed under the terms of the MIT license.
@@ -397,7 +397,8 @@ button {
     color: #fff;
 }
 
-.x-friend-item > .detail > .extra {
+.x-friend-item > .detail > .extra,
+.extra {
     color: #c7c7c7;
 }
 
@@ -412,3 +413,74 @@ button {
 .x-grey {
     color: #b3b3b3;
 }
+
+.el-color-picker__panel {
+    background-color: #222;
+}
+
+.x-text-removed {
+    text-decoration: line-through;
+    color: #ff4444;
+    background-color: rgba(255, 0, 0, 0.2);
+    padding: 2px 2px;
+    border-radius: 4px;
+}
+
+.x-text-added {
+    color: rgb(76, 255, 80);
+    background-color: rgba(76, 255, 80, 0.2);
+    padding: 2px 2px;
+    border-radius: 4px;
+}
+.el-divider {
+    background-color: #606266;
+}
+.el-divider__text {
+    background: #222;
+    color: #ffffff;
+}
+.el-backtop {
+    background-color: #333;
+}
+
+// Date picker
+.el-date-picker {
+    background-color: #222;
+    color: #fff;
+}
+.el-date-table td.disabled div {
+    background-color: #333;
+    color: #606266;
+}
+.el-date-table td.next-month,
+.el-date-table td.prev-month {
+    color: #606266;
+}
+.el-picker-panel__icon-btn {
+    color: #fff;
+}
+.el-date-table th {
+    border-bottom: 1px solid #555;
+    color: #fff;
+}
+.el-date-picker__header-label {
+    color: #fff;
+}
+.el-picker-panel {
+    border: 1px solid #333;
+}
+.el-year-table td.disabled .cell {
+    background-color: rgba(0, 0, 0, 0.2);
+}
+.el-month-table td.disabled .cell {
+    background-color: rgba(0, 0, 0, 0.2);
+}
+// Date picker end
+
+// el-skeleton
+.el-skeleton.is-animated .el-skeleton__item {
+    background: linear-gradient(90deg, #333 25%, #555 37%, #333 63%);
+    background-size: 400% 100%;
+    animation: el-skeleton-loading 1.4s ease infinite;
+}
+// el-sekeleton end

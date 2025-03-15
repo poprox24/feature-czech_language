@@ -1,6 +1,7 @@
 import * as workerTimers from 'worker-timers';
 import configRepository from '../repository/config.js';
 import { baseClass, $app, API, $t, $utils } from './baseClass.js';
+import { worldRequest } from './request';
 
 export default class extends baseClass {
     constructor(_app, _API, _t) {
@@ -154,9 +155,10 @@ export default class extends baseClass {
                             wristFeed.unshift(feedEntry);
                         } else {
                             // no world cache, fetch world and try again
-                            API.getWorld({
-                                worldId: ref.$location.worldId
-                            })
+                            worldRequest
+                                .getWorld({
+                                    worldId: ref.$location.worldId
+                                })
                                 .then((args) => {
                                     workerTimers.setTimeout(() => {
                                         // delay to allow for world cache to update
@@ -419,7 +421,7 @@ export default class extends baseClass {
 
         updateSharedFeedNotificationTable(forceUpdate) {
             // invite, requestInvite, requestInviteResponse, inviteResponse, friendRequest
-            var notificationTable = this.notificationTable;
+            var notificationTable = this.notificationTable.data;
             var i = notificationTable.length;
             if (i > 0) {
                 if (
@@ -471,7 +473,7 @@ export default class extends baseClass {
 
         updateSharedFeedFriendLogTable(forceUpdate) {
             // TrustLevel, Friend, FriendRequest, Unfriend, DisplayName
-            var friendLog = this.friendLogTable;
+            var friendLog = this.friendLogTable.data;
             var i = friendLog.length;
             if (i > 0) {
                 if (

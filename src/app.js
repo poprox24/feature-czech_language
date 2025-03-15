@@ -1,4 +1,4 @@
-// Copyright(c) 2019-2024 pypy, Natsumi and individual contributors.
+// Copyright(c) 2019-2025 pypy, Natsumi and individual contributors.
 // All rights reserved.
 //
 // This work is licensed under the terms of the MIT license.
@@ -16,6 +16,11 @@ import VueLazyload from 'vue-lazyload';
 import VueI18n from 'vue-i18n';
 import { DataTables } from 'vue-data-tables';
 import ElementUI from 'element-ui';
+import dayjs from 'dayjs';
+import duration from 'dayjs/plugin/duration';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+import isSameOrAfter from 'dayjs/plugin/isSameOrAfter';
 import * as workerTimers from 'worker-timers';
 import 'default-passive-events';
 
@@ -30,13 +35,38 @@ import $utils from './classes/utils.js';
 import _apiInit from './classes/apiInit.js';
 import _apiRequestHandler from './classes/apiRequestHandler.js';
 import _vrcxJsonStorage from './classes/vrcxJsonStorage.js';
+import {
+    userRequest,
+    worldRequest,
+    instanceRequest,
+    friendRequest,
+    avatarRequest,
+    notificationRequest,
+    playerModerationRequest,
+    avatarModerationRequest,
+    favoriteRequest,
+    vrcPlusIconRequest,
+    inviteMessagesRequest,
+    miscRequest,
+    imageRequest,
+    vrcPlusImageRequest
+} from './classes/request';
 
 // tabs
 import ModerationTab from './views/tabs/Moderation.vue';
+import ChartsTab from './views/tabs/Charts.vue';
+import SideBar from './views/SideBar.vue';
+import NavMenu from './views/NavMenu.vue';
+import FriendsListTab from './views/tabs/FriendsList.vue';
+import FavoritesTab from './views/tabs/Favorites.vue';
 
 // components
 import SimpleSwitch from './components/settings/SimpleSwitch.vue';
-import GroupsSidebar from './components/sidebar/GroupsSidebar.vue';
+import Location from './components/common/Location.vue';
+
+// dialogs
+import WorldDialog from './views/dialogs/WorldDialog.vue';
+import PreviousInstanceInfoDialog from './views/dialogs/PreviousInstanceInfoDialog.vue';
 
 // main app classes
 import _sharedFeed from './classes/sharedFeed.js';
@@ -58,6 +88,8 @@ import _languages from './classes/languages.js';
 import _groups from './classes/groups.js';
 import _vrcRegistry from './classes/vrcRegistry.js';
 import _restoreFriendOrder from './classes/restoreFriendOrder.js';
+
+import pugTemplate from './app.pug';
 
 // API classes
 import _config from './classes/API/config.js';
@@ -144,6 +176,7 @@ console.log(`isLinux: ${LINUX}`);
     await configRepository.init();
 
     const app = {
+        template: pugTemplate,
         data: {
             API,
             isGameRunning: false,
@@ -164,16 +197,44 @@ console.log(`isLinux: ${LINUX}`);
         components: {
             // tabs
             ModerationTab,
+            ChartsTab,
+            FriendsListTab,
+            FavoritesTab,
+            // - others
+            SideBar,
+            NavMenu,
 
             // components
+            // - common
+            Location,
+
             // - settings
             SimpleSwitch,
 
-            // components
-            // - sidebar(friendsListSidebar)
-            GroupsSidebar
+            // - dialogs
+            PreviousInstanceInfoDialog,
+            WorldDialog
         },
-        el: '#x-app',
+        provide() {
+            return {
+                API,
+                showUserDialog: this.showUserDialog,
+                adjustDialogZ: this.adjustDialogZ,
+                getWorldName: this.getWorldName,
+                userImage: this.userImage,
+                userStatusClass: this.userStatusClass,
+                getGroupName: this.getGroupName,
+                userImageFull: this.userImageFull,
+                showFullscreenImageDialog: this.showFullscreenImageDialog,
+                statusClass: this.statusClass,
+                getFaviconUrl: this.getFaviconUrl,
+                openExternalLink: this.openExternalLink
+            };
+        },
+        el: '#root',
+        beforeMount() {
+            this.changeThemeMode();
+        },
         async mounted() {
             await this.initLanguage();
             try {
@@ -181,7 +242,6 @@ console.log(`isLinux: ${LINUX}`);
             } catch (err) {
                 console.error(err);
             }
-            await this.changeThemeMode();
             await AppApi.SetUserAgent();
             this.appVersion = await AppApi.GetVersion();
             await this.compareAppVersion();
@@ -204,9 +264,6 @@ console.log(`isLinux: ${LINUX}`);
             );
             API.$on('SHOW_GROUP_DIALOG', (groupId) =>
                 this.showGroupDialog(groupId)
-            );
-            API.$on('SHOW_LAUNCH_DIALOG', (tag, shortName) =>
-                this.showLaunchDialog(tag, shortName)
             );
             this.updateLoop();
             this.getGameLogTable();
@@ -319,7 +376,7 @@ console.log(`isLinux: ${LINUX}`);
 
     // #endregion
 
-    // #region | Init: Noty, Vue, Vue-Markdown, ElementUI, VueI18n, VueLazyLoad, Vue filters, dark stylesheet
+    // #region | Init: Noty, Vue, Vue-Markdown, ElementUI, VueI18n, VueLazyLoad, Vue filters, dark stylesheet, dayjs
 
     Noty.overrideDefaults({
         animation: {
@@ -345,6 +402,11 @@ console.log(`isLinux: ${LINUX}`);
     });
 
     Vue.use(DataTables);
+
+    dayjs.extend(duration);
+    dayjs.extend(utc);
+    dayjs.extend(timezone);
+    dayjs.extend(isSameOrAfter);
 
     // #endregion
 
@@ -466,34 +528,35 @@ console.log(`isLinux: ${LINUX}`);
         }
     };
 
-    // FIXME: it may performance issue. review here
     API.applyUserLanguage = function (ref) {
+        if (!ref || !ref.tags || !$app.subsetOfLanguages) {
+            return;
+        }
+
         ref.$languages = [];
-        var { tags } = ref;
-        for (var tag of tags) {
-            if (tag.startsWith('language_') === false) {
-                continue;
+        const languagePrefix = 'language_';
+        const prefixLength = languagePrefix.length;
+
+        for (const tag of ref.tags) {
+            if (tag.startsWith(languagePrefix)) {
+                const key = tag.substring(prefixLength);
+                const value = $app.subsetOfLanguages[key];
+
+                if (value !== undefined) {
+                    ref.$languages.push({ key, value });
+                }
             }
-            var key = tag.substr(9);
-            var value = $app.subsetOfLanguages[key];
-            if (typeof value === 'undefined') {
-                continue;
-            }
-            ref.$languages.push({
-                key,
-                value
-            });
         }
     };
 
     API.applyPresenceLocation = function (ref) {
         var presence = ref.presence;
-        if ($app.isRealInstance(presence.world)) {
+        if ($utils.isRealInstance(presence.world)) {
             ref.$locationTag = `${presence.world}:${presence.instance}`;
         } else {
             ref.$locationTag = presence.world;
         }
-        if ($app.isRealInstance(presence.travelingToWorld)) {
+        if ($utils.isRealInstance(presence.travelingToWorld)) {
             ref.$travelingToLocation = `${presence.travelingToWorld}:${presence.travelingToInstance}`;
         } else {
             ref.$travelingToLocation = presence.travelingToWorld;
@@ -550,6 +613,7 @@ console.log(`isLinux: ${LINUX}`);
         if (typeof ref === 'undefined') {
             ref = {
                 ageVerificationStatus: '',
+                ageVerified: false,
                 allowAvatarCopying: false,
                 badges: [],
                 bio: '',
@@ -770,127 +834,6 @@ console.log(`isLinux: ${LINUX}`);
         return ref;
     };
 
-    /**
-     * Fetch user from API.
-     * @param {{ userId: string }} params identifier of registered user
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getUser = function (params) {
-        return this.call(`users/${params.userId}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('USER', args);
-            return args;
-        });
-    };
-
-    /**
-     * Fetch user from cache if they're in it. Otherwise, calls API.
-     * @param {{ userId: string }} params identifier of registered user
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getCachedUser = function (params) {
-        return new Promise((resolve, reject) => {
-            var ref = this.cachedUsers.get(params.userId);
-            if (typeof ref === 'undefined') {
-                this.getUser(params).catch(reject).then(resolve);
-            } else {
-                resolve({
-                    cache: true,
-                    json: ref,
-                    params,
-                    ref
-                });
-            }
-        });
-    };
-
-    /** @typedef {{
-     * n: number,
-     * offset: number,
-     * search: string,
-     * sort: 'nuisanceFactor' | 'created' | '_created_at' | 'last_login',
-     * order: 'ascending', 'descending'
-     }} GetUsersParameters */
-    /**
-     * Fetch multiple users from API.
-     * @param params {GetUsersParameters} filtering and sorting parameters
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getUsers = function (params) {
-        return this.call('users', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('USER:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param params {string[]}
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.addUserTags = function (params) {
-        return this.call(`users/${this.currentUser.id}/addTags`, {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('USER:CURRENT:SAVE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param params {string[]}
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.removeUserTags = function (params) {
-        return this.call(`users/${this.currentUser.id}/removeTags`, {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('USER:CURRENT:SAVE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param params {{ userId: string }}
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getUserFeedback = function (params) {
-        return this.call(`users/${params.userId}/feedback`, {
-            method: 'GET',
-            params: {
-                n: 100
-            }
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('USER:FEEDBACK', args);
-            return args;
-        });
-    };
-
     // #endregion
     // #region | API: World
 
@@ -965,7 +908,7 @@ console.log(`isLinux: ${LINUX}`);
             return L.worldId;
         }
 
-        const args = await this.getUser({ userId: this.currentUser.id });
+        const args = await userRequest.getUser({ userId: this.currentUser.id });
         const user = args.json;
         let userLocation = user.location;
         if (userLocation === 'traveling') {
@@ -976,13 +919,13 @@ console.log(`isLinux: ${LINUX}`);
             userLocation
         );
 
-        if ($app.isRealInstance(userLocation)) {
+        if ($utils.isRealInstance(userLocation)) {
             console.warn('PWI: returning user location', userLocation);
             const L = $utils.parseLocation(userLocation);
             return L.worldId;
         }
 
-        if ($app.isRealInstance(gameLogLocation)) {
+        if ($utils.isRealInstance(gameLogLocation)) {
             console.warn(`PWI: returning gamelog location: `, gameLogLocation);
             const L = $utils.parseLocation(gameLogLocation);
             return L.worldId;
@@ -1003,6 +946,7 @@ console.log(`isLinux: ${LINUX}`);
                 id: '',
                 name: '',
                 description: '',
+                defaultContentSettings: {},
                 authorId: '',
                 authorName: '',
                 capacity: 0,
@@ -1049,291 +993,10 @@ console.log(`isLinux: ${LINUX}`);
         return ref;
     };
 
-    /**
-     *
-     * @param {{worldId: string}} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getWorld = function (params) {
-        return this.call(`worlds/${params.worldId}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLD', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{worldId: string}} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getCachedWorld = function (params) {
-        return new Promise((resolve, reject) => {
-            var ref = this.cachedWorlds.get(params.worldId);
-            if (typeof ref === 'undefined') {
-                this.getWorld(params).catch(reject).then(resolve);
-            } else {
-                resolve({
-                    cache: true,
-                    json: ref,
-                    params,
-                    ref
-                });
-            }
-        });
-    };
-
-    /**
-     * @typedef {{
-          n: number,
-          offset: number,
-          search: string,
-          userId: string,
-          user: 'me' | 'friend',
-          sort: 'popularity' | 'heat' | 'trust' | 'shuffle' | 'favorites' | 'reportScore' | 'reportCount' | 'publicationDate' | 'labsPublicationDate' | 'created' | '_created_at' | 'updated' | '_updated_at' | 'order',
-          order: 'ascending' | 'descending',
-          releaseStatus: 'public' | 'private' | 'hidden' | 'all',
-          featured: boolean
-     }} WorldSearchParameter
-     */
-    /**
-     *
-     * @param {WorldSearchParameter} params
-     * @param {string?} option sub-path of calling endpoint
-     * @returns {Promise<{json: any, params, option}>}
-     */
-    API.getWorlds = function (params, option) {
-        var endpoint = 'worlds';
-        if (typeof option !== 'undefined') {
-            endpoint = `worlds/${option}`;
-        }
-        return this.call(endpoint, {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                option
-            };
-            this.$emit('WORLD:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{worldId: string}} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.deleteWorld = function (params) {
-        return this.call(`worlds/${params.worldId}`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLD:DELETE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{id: string}} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.saveWorld = function (params) {
-        return this.call(`worlds/${params.id}`, {
-            method: 'PUT',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLD:SAVE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{worldId: string}} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.publishWorld = function (params) {
-        return this.call(`worlds/${params.worldId}/publish`, {
-            method: 'PUT',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLD:SAVE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{worldId: string}} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.unpublishWorld = function (params) {
-        return this.call(`worlds/${params.worldId}/publish`, {
-            method: 'DELETE',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLD:SAVE', args);
-            return args;
-        });
-    };
-
     // #endregion
     // #region | API: Instance
 
     API.cachedInstances = new Map();
-
-    /**
-     * @param {{worldId: string, instanceId: string}} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getInstance = function (params) {
-        return this.call(`instances/${params.worldId}:${params.instanceId}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('INSTANCE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @typedef {{
-     *     worldId: string,
-     *     type: string,
-     *     region: string,
-     *     ownerId: string,
-     *     roleIds: string[],
-     *     groupAccessType: string,
-     *     queueEnabled: boolean
-     * }} CreateInstanceParameter
-     */
-
-    /**
-     * @param {CreateInstanceParameter} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.createInstance = function (params) {
-        return this.call('instances', {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('INSTANCE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ worldId: string, instanceId: string, shortName: string }} instance
-     * @returns {Promise<{instance, json: T, params: {}}>}
-     */
-    API.getInstanceShortName = function (instance) {
-        var params = {};
-        if (instance.shortName) {
-            params.shortName = instance.shortName;
-        }
-        return this.call(
-            `instances/${instance.worldId}:${instance.instanceId}/shortName`,
-            {
-                method: 'GET',
-                params
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                instance,
-                params
-            };
-            this.$emit('INSTANCE:SHORTNAME', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ shortName: string }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getInstanceFromShortName = function (params) {
-        return this.call(`instances/s/${params.shortName}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('INSTANCE', args);
-            return args;
-        });
-    };
-
-    /**
-     * Send invite to current user.
-     * @param {{ worldId: string, instanceId: string, shortName: string }} instance
-     * @returns {Promise<{instance, json: any, params}>}
-     */
-    API.selfInvite = function (instance) {
-        /**
-         * @type {{ shortName?: string }}
-         */
-        var params = {};
-        if (instance.shortName) {
-            params.shortName = instance.shortName;
-        }
-        return this.call(
-            `invite/myself/to/${instance.worldId}:${instance.instanceId}`,
-            {
-                method: 'POST',
-                params
-            }
-        )
-            .then((json) => {
-                var args = {
-                    json,
-                    instance,
-                    params
-                };
-                return args;
-            })
-            .catch((err) => {
-                if (err?.error?.message) {
-                    $app.$message({
-                        message: err.error.message,
-                        type: 'error'
-                    });
-                    throw err;
-                }
-                $app.$message({
-                    message: $t('message.instance.not_allowed'),
-                    type: 'error'
-                });
-                throw err;
-            });
-    };
 
     API.applyInstance = function (json) {
         var ref = this.cachedInstances.get(json.id);
@@ -1365,6 +1028,7 @@ console.log(`isLinux: ${LINUX}`);
                 world: {},
                 users: [], // only present when you're the owner
                 clientNumber: '',
+                contentSettings: {},
                 photonRegion: '',
                 region: '',
                 canRequestInvite: false,
@@ -1381,6 +1045,7 @@ console.log(`isLinux: ${LINUX}`);
                 ageGate: null,
                 // VRCX
                 $fetchedAt: '',
+                $disabledContentSettings: [],
                 ...json
             };
             this.cachedInstances.set(ref.id, ref);
@@ -1389,15 +1054,27 @@ console.log(`isLinux: ${LINUX}`);
         }
         ref.$location = $utils.parseLocation(ref.location);
         if (json.world?.id) {
-            this.getCachedWorld({
-                worldId: json.world.id
-            }).then((args) => {
-                ref.world = args.ref;
-                return args;
-            });
+            worldRequest
+                .getCachedWorld({
+                    worldId: json.world.id
+                })
+                .then((args) => {
+                    ref.world = args.ref;
+                    return args;
+                });
         }
         if (!json.$fetchedAt) {
             ref.$fetchedAt = new Date().toJSON();
+        }
+        if (json.contentSettings && Object.keys(json.contentSettings).length) {
+            for (var setting in $app.instanceContentSettings) {
+                if (json.contentSettings[setting]) {
+                    continue;
+                }
+                ref.$disabledContentSettings.push(
+                    $app.instanceContentSettings[setting]
+                );
+            }
         }
         return ref;
     };
@@ -1486,12 +1163,13 @@ console.log(`isLinux: ${LINUX}`);
             n: 50,
             offset: 0
         };
-        // API offset limit is 5000
-        mainLoop: for (var i = 100; i > -1; i--) {
+        // API offset limit *was* 5000
+        // it is now 7500
+        mainLoop: for (var i = 150; i > -1; i--) {
             retryLoop: for (var j = 0; j < 10; j++) {
                 // handle 429 ratelimit error, retry 10 times
                 try {
-                    var args = await this.getFriends(params);
+                    var args = await friendRequest.getFriends(params);
                     if (!args.json || args.json.length === 0) {
                         break mainLoop;
                     }
@@ -1521,8 +1199,12 @@ console.log(`isLinux: ${LINUX}`);
         for (var userId of this.currentUser.friends) {
             if (!friends.some((x) => x.id === userId)) {
                 try {
+                    if (!API.isLoggedIn) {
+                        console.error(`User isn't logged in`);
+                        return friends;
+                    }
                     console.log('Fetching remaining friend', userId);
-                    var args = await this.getUser({ userId });
+                    var args = await userRequest.getUser({ userId });
                     friends.push(args.json);
                 } catch (err) {
                     console.error(err);
@@ -1533,7 +1215,7 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     API.refetchBrokenFriends = async function (friends) {
-        // attempt to broken data from bulk friend fetch
+        // attempt to fix broken data from bulk friend fetch
         for (var i = 0; i < friends.length; i++) {
             var friend = friends[i];
             try {
@@ -1552,7 +1234,7 @@ console.log(`isLinux: ${LINUX}`);
                             friend
                         );
                     }
-                    var args = await this.getUser({
+                    var args = await userRequest.getUser({
                         userId: friend.id
                     });
                     friends[i] = args.json;
@@ -1563,7 +1245,7 @@ console.log(`isLinux: ${LINUX}`);
                             friend.displayName
                         );
                     }
-                    var args = await this.getUser({
+                    var args = await userRequest.getUser({
                         userId: friend.id
                     });
                     friends[i] = args.json;
@@ -1573,108 +1255,6 @@ console.log(`isLinux: ${LINUX}`);
             }
         }
         return friends;
-    };
-
-    /**
-     * Fetch friends of current user.
-     * @param {{ n: number, offset: number, offline: boolean }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getFriends = function (params) {
-        return this.call('auth/user/friends', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FRIEND:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ userId: string }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.deleteFriend = function (params) {
-        return this.call(`auth/user/friends/${params.userId}`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FRIEND:DELETE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ userId: string }} params
-     * @returns {Promise<{json: T, params}>}
-     */
-    API.sendFriendRequest = function (params) {
-        return this.call(`user/${params.userId}/friendRequest`, {
-            method: 'POST'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FRIEND:REQUEST', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ userId: string }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.cancelFriendRequest = function (params) {
-        return this.call(`user/${params.userId}/friendRequest`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FRIEND:REQUEST:CANCEL', args);
-            return args;
-        });
-    };
-
-    API.deleteHiddenFriendRequest = function (params, userId) {
-        return this.call(`user/${userId}/friendRequest`, {
-            method: 'DELETE',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                userId
-            };
-            this.$emit('NOTIFICATION:HIDE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ userId: string }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getFriendStatus = function (params) {
-        return this.call(`user/${params.userId}/friendStatus`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FRIEND:STATUS', args);
-            return args;
-        });
     };
 
     // #endregion
@@ -1766,160 +1346,6 @@ console.log(`isLinux: ${LINUX}`);
         ref.name = $app.replaceBioSymbols(ref.name);
         ref.description = $app.replaceBioSymbols(ref.description);
         return ref;
-    };
-
-    /**
-     * @param {{ avatarId: string }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getAvatar = function (params) {
-        return this.call(`avatars/${params.avatarId}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR', args);
-            return args;
-        });
-    };
-
-    /**
-     * @typedef {{
-     *     n: number,
-     *     offset: number,
-     *     search: string,
-     *     userId: string,
-     *     user: 'me' | 'friends'
-     *     sort: 'created' | 'updated' | 'order' | '_created_at' | '_updated_at',
-     *     order: 'ascending' | 'descending',
-     *     releaseStatus: 'public' | 'private' | 'hidden' | 'all',
-     *     featured: boolean
-     * }} GetAvatarsParameter
-     */
-    /**
-     *
-     * @param {GetAvatarsParameter} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getAvatars = function (params) {
-        return this.call('avatars', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ id: string, releaseStatus: 'public' | 'private' }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.saveAvatar = function (params) {
-        return this.call(`avatars/${params.id}`, {
-            method: 'PUT',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR:SAVE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{avatarId: string }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.selectAvatar = function (params) {
-        return this.call(`avatars/${params.avatarId}/select`, {
-            method: 'PUT',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR:SELECT', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ avatarId: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.selectFallbackAvatar = function (params) {
-        return this.call(`avatars/${params.avatarId}/selectfallback`, {
-            method: 'PUT',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR:SELECT', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ avatarId: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.deleteAvatar = function (params) {
-        return this.call(`avatars/${params.avatarId}`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR:DELETE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ avatarId: string }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.createImposter = function (params) {
-        return this.call(`avatars/${params.avatarId}/impostor/enqueue`, {
-            method: 'POST'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR:IMPOSTER:CREATE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ avatarId: string }} params
-     * @returns {Promise<{json: T, params}>}
-     */
-    API.deleteImposter = function (params) {
-        return this.call(`avatars/${params.avatarId}/impostor`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR:IMPOSTER:DELETE', args);
-            return args;
-        });
     };
 
     API.$on('AVATAR:IMPOSTER:DELETE', function (args) {
@@ -2120,7 +1546,7 @@ console.log(`isLinux: ${LINUX}`);
             };
             var count = 50; // 5000 max
             for (var i = 0; i < count; i++) {
-                var args = await this.getNotifications(params);
+                var args = await notificationRequest.getNotifications(params);
                 $app.unseenNotifications = [];
                 params.offset += 100;
                 if (args.json.length < 100) {
@@ -2133,7 +1559,7 @@ console.log(`isLinux: ${LINUX}`);
             };
             var count = 50; // 5000 max
             for (var i = 0; i < count; i++) {
-                var args = await this.getNotificationsV2(params);
+                var args = await notificationRequest.getNotificationsV2(params);
                 $app.unseenNotifications = [];
                 params.offset += 100;
                 if (args.json.length < 100) {
@@ -2146,7 +1572,8 @@ console.log(`isLinux: ${LINUX}`);
             };
             var count = 50; // 5000 max
             for (var i = 0; i < count; i++) {
-                var args = await this.getHiddenFriendRequests(params);
+                var args =
+                    await notificationRequest.getHiddenFriendRequests(params);
                 $app.unseenNotifications = [];
                 params.offset += 100;
                 if (args.json.length < 100) {
@@ -2155,81 +1582,10 @@ console.log(`isLinux: ${LINUX}`);
             }
         } catch (err) {
             console.error(err);
+        } finally {
+            this.isNotificationsLoading = false;
+            $app.notificationInitStatus = true;
         }
-        this.isNotificationsLoading = false;
-    };
-
-    /** @typedef {{
-     *      n: number,
-     *      offset: number,
-     *      sent: boolean,
-     *      type: string,
-     *      //  (ISO8601 or 'five_minutes_ago')
-     *      after: 'five_minutes_ago' | (string & {})
-     }} NotificationFetchParameter */
-
-    /**
-     *
-     * @param {NotificationFetchParameter} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.getNotifications = function (params) {
-        return this.call('auth/user/notifications', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('NOTIFICATION:LIST', args);
-            return args;
-        });
-    };
-
-    API.getHiddenFriendRequests = function (params) {
-        return this.call('auth/user/notifications', {
-            method: 'GET',
-            params: {
-                type: 'friendRequest',
-                hidden: true,
-                ...params
-            }
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('NOTIFICATION:LIST:HIDDEN', args);
-            return args;
-        });
-    };
-
-    API.clearNotifications = function () {
-        return this.call('auth/user/notifications/clear', {
-            method: 'PUT'
-        }).then((json) => {
-            var args = {
-                json
-            };
-            // FIXME: NOTIFICATION:CLEAR 핸들링
-            this.$emit('NOTIFICATION:CLEAR', args);
-            return args;
-        });
-    };
-
-    API.getNotificationsV2 = function (params) {
-        return this.call('notifications', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('NOTIFICATION:V2:LIST', args);
-            return args;
-        });
     };
 
     API.$on('NOTIFICATION:V2:LIST', function (args) {
@@ -2291,50 +1647,6 @@ console.log(`isLinux: ${LINUX}`);
         }
     });
 
-    API.hideNotificationV2 = function (notificationId) {
-        return this.call(`notifications/${notificationId}`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                params: {
-                    notificationId
-                }
-            };
-            this.$emit('NOTIFICATION:V2:HIDE', args);
-            return args;
-        });
-    };
-
-    /**
-    * @param {{
-            notificationId: string,
-            responseType: string,
-            responseData: string
-    }} params
-    * @return { Promise<{json: any, params}> }
-    */
-    API.sendNotificationResponse = function (params) {
-        return this.call(`notifications/${params.notificationId}/respond`, {
-            method: 'POST',
-            params
-        })
-            .then((json) => {
-                var args = {
-                    json,
-                    params
-                };
-                this.$emit('NOTIFICATION:RESPONSE', args);
-                return args;
-            })
-            .catch((err) => {
-                // something went wrong, lets assume it's already expired
-                this.$emit('NOTIFICATION:HIDE', { params });
-                API.hideNotificationV2(params.notificationId);
-                throw err;
-            });
-    };
-
     API.$on('NOTIFICATION:RESPONSE', function (args) {
         this.$emit('NOTIFICATION:HIDE', args);
         new Noty({
@@ -2343,178 +1655,6 @@ console.log(`isLinux: ${LINUX}`);
         }).show();
         console.log('NOTIFICATION:RESPONSE', args);
     });
-
-    /**
-     * string that represents valid serialized JSON of T's value
-     * @template T=any
-     * @typedef {string} JsonString
-     */
-    /**
-    * @param {{
-            receiverUserId: string,
-            type: string,
-            message: string,
-            seen: boolean,
-            details: JsonString<any>
-     }} params
-    * @return { Promise<{json: any, params}> }
-    */
-    API.sendInvite = function (params, receiverUserId) {
-        return this.call(`invite/${receiverUserId}`, {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                receiverUserId
-            };
-            this.$emit('NOTIFICATION:INVITE:SEND', args);
-            return args;
-        });
-    };
-
-    API.sendInvitePhoto = function (params, receiverUserId) {
-        return this.call(`invite/${receiverUserId}/photo`, {
-            uploadImageLegacy: true,
-            postData: JSON.stringify(params),
-            imageData: $app.uploadImage
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                receiverUserId
-            };
-            this.$emit('NOTIFICATION:INVITE:PHOTO:SEND', args);
-            return args;
-        });
-    };
-
-    API.sendInviteGalleryPhoto = function (params, receiverUserId) {
-        return this.call(`invite/${receiverUserId}/photo`, {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                receiverUserId
-            };
-            this.$emit('NOTIFICATION:INVITE:GALLERYPHOTO:SEND', args);
-            return args;
-        });
-    };
-
-    API.sendRequestInvite = function (params, receiverUserId) {
-        return this.call(`requestInvite/${receiverUserId}`, {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                receiverUserId
-            };
-            this.$emit('NOTIFICATION:REQUESTINVITE:SEND', args);
-            return args;
-        });
-    };
-
-    API.sendRequestInvitePhoto = function (params, receiverUserId) {
-        return this.call(`requestInvite/${receiverUserId}/photo`, {
-            uploadImageLegacy: true,
-            postData: JSON.stringify(params),
-            imageData: $app.uploadImage
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                receiverUserId
-            };
-            this.$emit('NOTIFICATION:REQUESTINVITE:PHOTO:SEND', args);
-            return args;
-        });
-    };
-
-    API.sendInviteResponse = function (params, inviteId) {
-        return this.call(`invite/${inviteId}/response`, {
-            method: 'POST',
-            params,
-            inviteId
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                inviteId
-            };
-            this.$emit('INVITE:RESPONSE:SEND', args);
-            return args;
-        });
-    };
-
-    API.sendInviteResponsePhoto = function (params, inviteId) {
-        return this.call(`invite/${inviteId}/response/photo`, {
-            uploadImageLegacy: true,
-            postData: JSON.stringify(params),
-            imageData: $app.uploadImage,
-            inviteId
-        }).then((json) => {
-            var args = {
-                json,
-                params,
-                inviteId
-            };
-            this.$emit('INVITE:RESPONSE:PHOTO:SEND', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ notificationId: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.acceptFriendRequestNotification = function (params) {
-        return this.call(
-            `auth/user/notifications/${params.notificationId}/accept`,
-            {
-                method: 'PUT'
-            }
-        )
-            .then((json) => {
-                var args = {
-                    json,
-                    params
-                };
-                this.$emit('NOTIFICATION:ACCEPT', args);
-                return args;
-            })
-            .catch((err) => {
-                // if friend request could not be found, delete it
-                if (err && err.message && err.message.includes('404')) {
-                    this.$emit('NOTIFICATION:HIDE', { params });
-                }
-            });
-    };
-
-    /**
-     * @param {{ notificationId: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.hideNotification = function (params) {
-        return this.call(
-            `auth/user/notifications/${params.notificationId}/hide`,
-            {
-                method: 'PUT'
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('NOTIFICATION:HIDE', args);
-            return args;
-        });
-    };
 
     API.getFriendRequest = function (userId) {
         var array = $app.notificationTable.data;
@@ -2644,7 +1784,10 @@ console.log(`isLinux: ${LINUX}`);
         }
         this.isPlayerModerationsLoading = true;
         this.expirePlayerModerations();
-        Promise.all([this.getPlayerModerations(), this.getAvatarModerations()])
+        Promise.all([
+            playerModerationRequest.getPlayerModerations(),
+            avatarModerationRequest.getAvatarModerations()
+        ])
             .finally(() => {
                 this.isPlayerModerationsLoading = false;
             })
@@ -2653,114 +1796,10 @@ console.log(`isLinux: ${LINUX}`);
             });
     };
 
-    API.getPlayerModerations = function () {
-        return this.call('auth/user/playermoderations', {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json
-            };
-            this.$emit('PLAYER-MODERATION:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ moderated: string, type: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    // old-way: POST auth/user/blocks {blocked:userId}
-    API.sendPlayerModeration = function (params) {
-        return this.call('auth/user/playermoderations', {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('PLAYER-MODERATION:SEND', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ moderated: string, type: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    // old-way: PUT auth/user/unblocks {blocked:userId}
-    API.deletePlayerModeration = function (params) {
-        return this.call('auth/user/unplayermoderate', {
-            method: 'PUT',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('PLAYER-MODERATION:DELETE', args);
-            return args;
-        });
-    };
-
     // #endregion
     // #region | API: AvatarModeration
 
     API.cachedAvatarModerations = new Map();
-
-    API.getAvatarModerations = function () {
-        return this.call('auth/user/avatarmoderations', {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json
-            };
-            this.$emit('AVATAR-MODERATION:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ avatarModerationType: string, targetAvatarId: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.sendAvatarModeration = function (params) {
-        return this.call('auth/user/avatarmoderations', {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR-MODERATION', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ avatarModerationType: string, targetAvatarId: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.deleteAvatarModeration = function (params) {
-        return this.call(
-            `auth/user/avatarmoderations?targetAvatarId=${encodeURIComponent(
-                params.targetAvatarId
-            )}&avatarModerationType=${encodeURIComponent(
-                params.avatarModerationType
-            )}`,
-            {
-                method: 'DELETE'
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATAR-MODERATION:DELETE', args);
-            return args;
-        });
-    };
 
     API.$on('AVATAR-MODERATION', function (args) {
         args.ref = this.applyAvatarModeration(args.json);
@@ -3053,6 +2092,7 @@ console.log(`isLinux: ${LINUX}`);
             ref.$isExpired = false;
         }
         ref.$groupKey = `${ref.type}:${String(ref.tags[0])}`;
+
         if (ref.$isDeleted === false && ref.$groupRef === null) {
             var group = this.cachedFavoriteGroupsByTypeName.get(ref.$groupKey);
             if (typeof group !== 'undefined') {
@@ -3098,13 +2138,14 @@ console.log(`isLinux: ${LINUX}`);
             offset: 0,
             tag
         };
-        this.getFavoriteAvatars(params);
+        favoriteRequest.getFavoriteAvatars(params);
     };
 
     API.refreshFavoriteItems = function () {
+        // TODO: maybe......
         var types = {
-            world: [0, 'getFavoriteWorlds'],
-            avatar: [0, 'getFavoriteAvatars']
+            world: [0, favoriteRequest.getFavoriteWorlds],
+            avatar: [0, favoriteRequest.getFavoriteAvatars]
         };
         var tags = [];
         for (var ref of this.cachedFavorites.values()) {
@@ -3157,13 +2198,14 @@ console.log(`isLinux: ${LINUX}`);
         }
         this.isFavoriteLoading = true;
         try {
-            await this.getFavoriteLimits();
+            await favoriteRequest.getFavoriteLimits();
         } catch (err) {
             console.error(err);
         }
         this.expireFavorites();
+        this.cachedFavoriteGroupsByTypeName.clear();
         this.bulk({
-            fn: 'getFavorites',
+            fn: favoriteRequest.getFavorites,
             N: -1,
             params: {
                 n: 50,
@@ -3271,7 +2313,9 @@ console.log(`isLinux: ${LINUX}`);
             for (var group of groups) {
                 if (group.assign === false && group.name === ref.name) {
                     group.assign = true;
-                    group.displayName = ref.displayName;
+                    if (ref.displayName) {
+                        group.displayName = ref.displayName;
+                    }
                     group.visibility = ref.visibility;
                     ref.$groupRef = group;
                     assigns.add(ref.id);
@@ -3347,18 +2391,6 @@ console.log(`isLinux: ${LINUX}`);
         }
     };
 
-    API.getFavoriteLimits = function () {
-        return this.call('auth/user/favoritelimits', {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json
-            };
-            this.$emit('FAVORITE:LIMITS', args);
-            return args;
-        });
-    };
-
     API.$on('FAVORITE:LIMITS', function (args) {
         this.favoriteLimits = {
             ...this.favoriteLimits,
@@ -3373,7 +2405,7 @@ console.log(`isLinux: ${LINUX}`);
         this.isFavoriteGroupLoading = true;
         this.expireFavoriteGroups();
         this.bulk({
-            fn: 'getFavoriteGroups',
+            fn: favoriteRequest.getFavoriteGroups,
             N: -1,
             params: {
                 n: 50,
@@ -3389,177 +2421,10 @@ console.log(`isLinux: ${LINUX}`);
         });
     };
 
-    /**
-     * @param {{
-     * n: number,
-     * offset: number,
-     * type: string,
-     * tag: string
-     * }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.getFavorites = function (params) {
-        return this.call('favorites', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FAVORITE:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{
-     *    type: string,
-     *    favoriteId: string (objectId),
-     *    tags: string
-     * }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.addFavorite = function (params) {
-        return this.call('favorites', {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FAVORITE:ADD', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ objectId: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.deleteFavorite = function (params) {
-        return this.call(`favorites/${params.objectId}`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FAVORITE:DELETE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{ n: number, offset: number, type: string }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.getFavoriteGroups = function (params) {
-        return this.call('favorite/groups', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FAVORITE:GROUP:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-     *
-     * @param {{ type: string, group: string, displayName: string, visibility: string }} params group is a name
-     * @return { Promise<{json: any, params}> }
-     */
-    API.saveFavoriteGroup = function (params) {
-        return this.call(
-            `favorite/group/${params.type}/${params.group}/${this.currentUser.id}`,
-            {
-                method: 'PUT',
-                params
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FAVORITE:GROUP:SAVE', args);
-            return args;
-        });
-    };
-
-    /**
-     * @param {{
-     *    type: string,
-     *    group: string (name)
-     * }} params
-     * @return { Promise<{json: any, params}> }
-     */
-    API.clearFavoriteGroup = function (params) {
-        return this.call(
-            `favorite/group/${params.type}/${params.group}/${this.currentUser.id}`,
-            {
-                method: 'DELETE',
-                params
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FAVORITE:GROUP:CLEAR', args);
-            return args;
-        });
-    };
-
-    /**
-    * @param {{
-        n: number,
-        offset: number
-    }} params
-    * @return { Promise<{json: any, params}> }
-    */
-    API.getFavoriteWorlds = function (params) {
-        return this.call('worlds/favorites', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FAVORITE:WORLD:LIST', args);
-            return args;
-        });
-    };
-
-    /**
-    * @param {{
-            n: number,
-            offset: number
-    }} params
-    * @return { Promise<{json: any, params}> }
-    */
-    API.getFavoriteAvatars = function (params) {
-        return this.call('avatars/favorites', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FAVORITE:AVATAR:LIST', args);
-            return args;
-        });
-    };
-
     // #endregion
     // #region | API: Visit
 
+    // no wrapper
     API.getVisits = function () {
         return this.call('visits', {
             method: 'GET'
@@ -3765,7 +2630,8 @@ console.log(`isLinux: ${LINUX}`);
         if (!this.appVersion) {
             return;
         }
-        if (this.appVersion.includes('VRCX Nightly')) {
+        var currentVersion = this.appVersion.replace(' (Linux)', '');
+        if (currentVersion.includes('VRCX Nightly')) {
             this.branch = 'Nightly';
         } else {
             this.branch = 'Stable';
@@ -3829,10 +2695,12 @@ console.log(`isLinux: ${LINUX}`);
     $app.data.debugGameLog = false;
     $app.data.debugFriendState = false;
 
+    $app.data.menuActiveIndex = 'feed';
+
     $app.methods.notifyMenu = function (index) {
-        var { menu } = this.$refs;
-        if (menu.activeIndex !== index) {
-            var item = menu.items[index];
+        const navRef = this.$refs.menu.$children[0];
+        if (this.menuActiveIndex !== index) {
+            const item = navRef.items[index];
             if (item) {
                 item.$el.classList.add('notify');
             }
@@ -3840,40 +2708,14 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.selectMenu = function (index) {
-        // NOTE
-        // 툴팁이 쌓여서 느려지기 때문에 날려줌.
-        // 근데 이 방법이 안전한지는 모르겠음
-        document.querySelectorAll('[role="tooltip"]').forEach((node) => {
-            node.remove();
-        });
-        var item = this.$refs.menu.items[index];
+        this.menuActiveIndex = index;
+        const item = this.$refs.menu.$children[0]?.items[index];
         if (item) {
             item.$el.classList.remove('notify');
         }
         if (index === 'notification') {
             this.unseenNotifications = [];
         }
-
-        workerTimers.setTimeout(() => {
-            // fix some weird sorting bug when disabling data tables
-
-            // looks like it's not needed anymore
-            // if (
-            //     typeof this.$refs.playerModerationTableRef?.sortData !==
-            //     'undefined'
-            // ) {
-            //     this.$refs.playerModerationTableRef.sortData.prop = 'created';
-            // }
-
-            if (
-                typeof this.$refs.notificationTableRef?.sortData !== 'undefined'
-            ) {
-                this.$refs.notificationTableRef.sortData.prop = 'created_at';
-            }
-            if (typeof this.$refs.friendLogTableRef?.sortData !== 'undefined') {
-                this.$refs.friendLogTableRef.sortData.prop = 'created_at';
-            }
-        }, 100);
     };
 
     $app.data.twoFactorAuthDialogVisible = false;
@@ -3881,6 +2723,21 @@ console.log(`isLinux: ${LINUX}`);
     API.$on('LOGIN', function () {
         $app.twoFactorAuthDialogVisible = false;
     });
+
+    $app.methods.clearCookiesTryLogin = async function () {
+        await webApiService.clearCookies();
+        if (this.loginForm.lastUserLoggedIn) {
+            var user =
+                this.loginForm.savedCredentials[
+                    this.loginForm.lastUserLoggedIn
+                ];
+            if (typeof user !== 'undefined') {
+                delete user.cookies;
+                await this.relogin(user);
+                return;
+            }
+        }
+    };
 
     $app.methods.resendEmail2fa = async function () {
         if (this.loginForm.lastUserLoggedIn) {
@@ -3904,7 +2761,6 @@ console.log(`isLinux: ${LINUX}`);
             type: 'error',
             text: 'Cannot send 2FA email without saved credentials. Please login again.'
         }).show();
-        this.promptEmailOTP();
     };
 
     $app.data.exportFriendsListDialog = false;
@@ -3961,7 +2817,7 @@ console.log(`isLinux: ${LINUX}`);
         };
         var map = new Map();
         API.bulk({
-            fn: 'getAvatars',
+            fn: avatarRequest.getAvatars,
             N: -1,
             params,
             handle: (args) => {
@@ -4014,6 +2870,7 @@ console.log(`isLinux: ${LINUX}`);
         }
         this.isLoggedIn = false;
         $app.friendLogInitStatus = false;
+        $app.notificationInitStatus = false;
     });
 
     API.$on('LOGIN', function (args) {
@@ -4023,7 +2880,6 @@ console.log(`isLinux: ${LINUX}`);
                 args.ref.displayName
             )}</strong>!`
         }).show();
-        $app.$refs.menu.activeIndex = 'feed';
         $app.updateStoredUser(this.currentUser);
     });
 
@@ -4231,65 +3087,17 @@ console.log(`isLinux: ${LINUX}`);
     $app.data.sortActiveFriends = false;
     $app.data.sortOfflineFriends = false;
 
-    $app.methods.saveFriendsGroupStates = async function () {
-        await configRepository.setBool(
-            'VRCX_isFriendsGroupMe',
-            this.isFriendsGroupMe
-        );
-        await configRepository.setBool(
-            'VRCX_isFriendsGroupFavorites',
-            this.isVIPFriends
-        );
-        await configRepository.setBool(
-            'VRCX_isFriendsGroupOnline',
-            this.isOnlineFriends
-        );
-        await configRepository.setBool(
-            'VRCX_isFriendsGroupActive',
-            this.isActiveFriends
-        );
-        await configRepository.setBool(
-            'VRCX_isFriendsGroupOffline',
-            this.isOfflineFriends
-        );
-    };
-
-    $app.methods.loadFriendsGroupStates = async function () {
-        this.isFriendsGroupMe = await configRepository.getBool(
-            'VRCX_isFriendsGroupMe',
-            true
-        );
-        this.isVIPFriends = await configRepository.getBool(
-            'VRCX_isFriendsGroupFavorites',
-            true
-        );
-        this.isOnlineFriends = await configRepository.getBool(
-            'VRCX_isFriendsGroupOnline',
-            true
-        );
-        this.isActiveFriends = await configRepository.getBool(
-            'VRCX_isFriendsGroupActive',
-            false
-        );
-        this.isOfflineFriends = await configRepository.getBool(
-            'VRCX_isFriendsGroupOffline',
-            false
-        );
-    };
-
-    API.$on('LOGIN', function () {
-        $app.loadFriendsGroupStates();
-    });
-
     $app.methods.fetchActiveFriend = function (userId) {
         this.pendingActiveFriends.add(userId);
         // FIXME: handle error
-        return API.getUser({
-            userId
-        }).then((args) => {
-            this.pendingActiveFriends.delete(userId);
-            return args;
-        });
+        return userRequest
+            .getUser({
+                userId
+            })
+            .then((args) => {
+                this.pendingActiveFriends.delete(userId);
+                return args;
+            });
     };
 
     API.$on('USER:CURRENT', function (args) {
@@ -4322,11 +3130,6 @@ console.log(`isLinux: ${LINUX}`);
         $app.friends.clear();
         $app.pendingActiveFriends.clear();
         $app.friendNumber = 0;
-        $app.isFriendsGroupMe = true;
-        $app.isVIPFriends = true;
-        $app.isOnlineFriends = true;
-        $app.isActiveFriends = true;
-        $app.isOfflineFriends = false;
         $app.isGroupInstances = false;
         $app.groupInstances = [];
         $app.vipFriends_ = [];
@@ -4535,7 +3338,7 @@ console.log(`isLinux: ${LINUX}`);
                 // 서버에서 오는 순서라고 보면 될 듯.
                 if (ctx.state === 'online') {
                     if (this.friendLogInitStatus) {
-                        API.getUser({
+                        userRequest.getUser({
                             userId: id
                         });
                     }
@@ -4579,14 +3382,14 @@ console.log(`isLinux: ${LINUX}`);
                 fromGetCurrentUser &&
                 ctx.state !== 'online' &&
                 typeof ref !== 'undefined' &&
-                this.isRealInstance(ref.location)
+                $utils.isRealInstance(ref.location)
             ) {
                 if (this.debugFriendState) {
                     console.log(
                         `Fetching offline friend in an instance from getCurrentUser ${ctx.name}`
                     );
                 }
-                API.getUser({
+                userRequest.getUser({
                     userId: id
                 });
             }
@@ -4652,7 +3455,7 @@ console.log(`isLinux: ${LINUX}`);
                             `Fetching friend coming online from getCurrentUser ${ctx.name}`
                         );
                     }
-                    API.getUser({
+                    userRequest.getUser({
                         userId: id
                     });
                     return;
@@ -4783,16 +3586,16 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.getWorldName = async function (location) {
         var worldName = '';
-        if (this.isRealInstance(location)) {
-            try {
-                var L = $utils.parseLocation(location);
-                if (L.worldId) {
-                    var args = await API.getCachedWorld({
-                        worldId: L.worldId
-                    });
-                    worldName = args.ref.name;
-                }
-            } catch (err) {}
+        try {
+            var L = $utils.parseLocation(location);
+            if (L.isRealInstance && L.worldId) {
+                var args = await worldRequest.getCachedWorld({
+                    worldId: L.worldId
+                });
+                worldName = args.ref.name;
+            }
+        } catch (e) {
+            throw e;
         }
         return worldName;
     };
@@ -4870,25 +3673,6 @@ console.log(`isLinux: ${LINUX}`);
         }
         var A = a.updated_at.toUpperCase();
         var B = b.updated_at.toUpperCase();
-        if (A < B) {
-            return 1;
-        }
-        if (A > B) {
-            return -1;
-        }
-        return 0;
-    };
-
-    // descending
-    var compareByCreatedAt = function (a, b) {
-        if (
-            typeof a.created_at !== 'string' ||
-            typeof b.created_at !== 'string'
-        ) {
-            return 0;
-        }
-        var A = a.created_at.toUpperCase();
-        var B = b.created_at.toUpperCase();
         if (A < B) {
             return 1;
         }
@@ -5263,7 +4047,7 @@ console.log(`isLinux: ${LINUX}`);
             type: 'info',
             callback: (action) => {
                 if (action === 'confirm') {
-                    API.deleteFriend({
+                    friendRequest.deleteFriend({
                         userId: id
                     });
                 }
@@ -5274,36 +4058,7 @@ console.log(`isLinux: ${LINUX}`);
     // #endregion
     // #region | App: Quick Search
 
-    $app.data.quickSearch = '';
     $app.data.quickSearchItems = [];
-
-    var localeIncludes = function (str, search, comparer) {
-        // These checks are stolen from https://stackoverflow.com/a/69623589/11030436
-        if (search === '') {
-            return true;
-        } else if (!str || !search) {
-            return false;
-        }
-        const strObj = String(str);
-        const searchObj = String(search);
-
-        if (strObj.length === 0) {
-            return false;
-        }
-
-        if (searchObj.length > strObj.length) {
-            return false;
-        }
-
-        // Now simply loop through each substring and compare them
-        for (let i = 0; i < str.length - searchObj.length + 1; i++) {
-            const substr = strObj.substring(i, i + searchObj.length);
-            if (comparer.compare(substr, searchObj) === 0) {
-                return true;
-            }
-        }
-        return false;
-    };
 
     // Making a persistent comparer increases perf by like 10x lmao
     $app.data._stringComparer = undefined;
@@ -5331,14 +4086,14 @@ console.log(`isLinux: ${LINUX}`);
             }
 
             const cleanName = removeConfusables(ctx.name);
-            let match = localeIncludes(
+            let match = $utils.localeIncludes(
                 cleanName,
                 cleanQuery,
                 this.stringComparer
             );
             if (!match) {
                 // Also check regular name in case search is with special characters
-                match = localeIncludes(
+                match = $utils.localeIncludes(
                     ctx.name,
                     cleanQuery,
                     this.stringComparer
@@ -5347,10 +4102,14 @@ console.log(`isLinux: ${LINUX}`);
             // Use query with whitespace for notes and memos as people are more
             // likely to include spaces in memos and notes
             if (!match && ctx.memo) {
-                match = localeIncludes(ctx.memo, query, this.stringComparer);
+                match = $utils.localeIncludes(
+                    ctx.memo,
+                    query,
+                    this.stringComparer
+                );
             }
             if (!match && ctx.ref.note) {
-                match = localeIncludes(
+                match = $utils.localeIncludes(
                     ctx.ref.note,
                     query,
                     this.stringComparer
@@ -5402,24 +4161,15 @@ console.log(`isLinux: ${LINUX}`);
                 const searchText = value.substr(7);
                 if (this.quickSearchItems.length > 1 && searchText.length) {
                     this.friendsListSearch = searchText;
-                    this.$refs.menu.activeIndex = 'friendsList';
+                    this.menuActiveIndex = 'friendsList';
                 } else {
-                    this.$refs.menu.activeIndex = 'search';
+                    this.menuActiveIndex = 'search';
                     this.searchText = searchText;
                     this.lookupUser({ displayName: searchText });
                 }
             } else {
                 this.showUserDialog(value);
             }
-            this.quickSearchVisibleChange(value);
-        }
-    };
-
-    // NOTE: 그냥 열고 닫고 했을때 changed 이벤트 발생이 안되기 때문에 넣음
-    $app.methods.quickSearchVisibleChange = function (value) {
-        if (value) {
-            this.quickSearch = '';
-            this.quickSearchItems = [];
             this.quickSearchUserHistory();
         }
     };
@@ -5476,8 +4226,9 @@ console.log(`isLinux: ${LINUX}`);
         $app.feedTable.data = [];
         $app.feedSessionTable = [];
         $app.friendLogInitStatus = false;
+        $app.notificationInitStatus = false;
         await database.initUserTables(args.json.id);
-        $app.$refs.menu.activeIndex = 'feed';
+        $app.menuActiveIndex = 'feed';
         await $app.updateDatabaseVersion();
         // eslint-disable-next-line require-atomic-updates
         $app.gameLogTable.data = await database.lookupGameLogDatabase(
@@ -5489,12 +4240,8 @@ console.log(`isLinux: ${LINUX}`);
         await $app.feedTableLookup();
         // eslint-disable-next-line require-atomic-updates
         $app.notificationTable.data = await database.getNotifications();
-        await this.refreshNotifications();
-        await $app.loadCurrentUserGroups(
-            args.json.id,
-            args.json?.presence?.groups
-        );
-        await $app.getCurrentUserGroups();
+        this.refreshNotifications();
+        $app.loadCurrentUserGroups(args.json.id, args.json?.presence?.groups);
         try {
             if (
                 await configRepository.getBool(`friendLogInit_${args.json.id}`)
@@ -5595,7 +4342,7 @@ console.log(`isLinux: ${LINUX}`);
                     typeof ref1.userId === 'string' &&
                     !API.cachedUsers.has(ref1.userId)
                 ) {
-                    API.getUser({ userId: ref1.userId });
+                    userRequest.getUser({ userId: ref1.userId });
                 }
             });
 
@@ -6193,6 +4940,7 @@ console.log(`isLinux: ${LINUX}`);
     $app.data.lastLocationDestination = '';
     $app.data.lastLocationDestinationTime = 0;
 
+    // It's like he's going to be used somewhere, and commenting it out would be an error or something.
     $app.methods.silentSearchUser = function (displayName) {
         console.log('Searching for userId for:', displayName);
         var params = {
@@ -6201,7 +4949,7 @@ console.log(`isLinux: ${LINUX}`);
             fuzzy: false,
             search: displayName
         };
-        API.getUsers(params).then((args) => {
+        userRequest.getUsers(params).then((args) => {
             var map = new Map();
             var nameFound = false;
             for (var json of args.json) {
@@ -6492,7 +5240,7 @@ console.log(`isLinux: ${LINUX}`);
             }
         }
         this.$refs.searchTab.currentName = '0';
-        this.$refs.menu.activeIndex = 'search';
+        this.menuActiveIndex = 'search';
     };
 
     // #endregion
@@ -6581,7 +5329,9 @@ console.log(`isLinux: ${LINUX}`);
         this.searchUserParams = {
             n: 10,
             offset: 0,
-            search: this.searchText
+            search: this.searchText,
+            customFields: this.searchUserByBio ? 'bio' : 'displayName',
+            sort: this.searchUserSortByLastLoggedIn ? 'last_login' : 'relevance'
         };
         await this.moreSearchUser();
     };
@@ -6595,7 +5345,8 @@ console.log(`isLinux: ${LINUX}`);
             }
         }
         this.isSearchUserLoading = true;
-        await API.getUsers(params)
+        await userRequest
+            .getUsers(params)
             .finally(() => {
                 this.isSearchUserLoading = false;
             })
@@ -6613,6 +5364,9 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.data.searchWorldLabs = false;
+
+    $app.data.searchUserByBio = false;
+    $app.data.searchUserSortByLastLoggedIn = false;
 
     $app.methods.searchWorld = function (ref) {
         this.searchWorldOption = '';
@@ -6691,7 +5445,8 @@ console.log(`isLinux: ${LINUX}`);
             }
         }
         this.isSearchWorldLoading = true;
-        API.getWorlds(params, this.searchWorldOption)
+        worldRequest
+            .getWorlds(params, this.searchWorldOption)
             .finally(() => {
                 this.isSearchWorldLoading = false;
             })
@@ -6797,7 +5552,7 @@ console.log(`isLinux: ${LINUX}`);
                     avatarsArray.sort(compareByUpdatedAt);
                     break;
                 case 'created':
-                    avatarsArray.sort(compareByCreatedAt);
+                    avatarsArray.sort($utils.compareByCreatedAt);
                     break;
                 case 'name':
                     avatarsArray.sort(compareByName);
@@ -7072,49 +5827,21 @@ console.log(`isLinux: ${LINUX}`);
         }
     };
 
-    $app.methods.deleteFavorite = function (objectId) {
-        API.deleteFavorite({
-            objectId
-        });
-        // FIXME: 메시지 수정
-        // this.$confirm('Continue? Delete Favorite', 'Confirm', {
-        //     confirmButtonText: 'Confirm',
-        //     cancelButtonText: 'Cancel',
-        //     type: 'info',
-        //     callback: (action) => {
-        //         if (action === 'confirm') {
-        //             API.deleteFavorite({
-        //                 objectId
-        //             });
-        //         }
-        //     }
-        // });
-    };
-
     $app.methods.deleteFavoriteNoConfirm = function (objectId) {
         if (!objectId) {
             return;
         }
-        API.deleteFavorite({
-            objectId
-        });
-    };
-
-    $app.methods.clearFavoriteGroup = function (ctx) {
-        // FIXME: 메시지 수정
-        this.$confirm('Continue? Clear Group', 'Confirm', {
-            confirmButtonText: 'Confirm',
-            cancelButtonText: 'Cancel',
-            type: 'info',
-            callback: (action) => {
-                if (action === 'confirm') {
-                    API.clearFavoriteGroup({
-                        type: ctx.type,
-                        group: ctx.name
-                    });
-                }
-            }
-        });
+        this.favoriteDialog.visible = true;
+        favoriteRequest
+            .deleteFavorite({
+                objectId
+            })
+            .then(() => {
+                this.favoriteDialog.visible = false;
+            })
+            .finally(() => {
+                this.favoriteDialog.loading = false;
+            });
     };
 
     $app.computed.favoriteFriends = function () {
@@ -7126,6 +5853,21 @@ console.log(`isLinux: ${LINUX}`);
             return this.favoriteFriends_;
         }
         return this.favoriteFriendsSorted;
+    };
+
+    $app.computed.groupedByGroupKeyFavoriteFriends = function () {
+        const groupedByGroupKeyFavoriteFriends = {};
+
+        this.favoriteFriends.forEach((friend) => {
+            if (friend.groupKey) {
+                if (!groupedByGroupKeyFavoriteFriends[friend.groupKey]) {
+                    groupedByGroupKeyFavoriteFriends[friend.groupKey] = [];
+                }
+                groupedByGroupKeyFavoriteFriends[friend.groupKey].push(friend);
+            }
+        });
+
+        return groupedByGroupKeyFavoriteFriends;
     };
 
     $app.computed.favoriteWorlds = function () {
@@ -7245,6 +5987,7 @@ console.log(`isLinux: ${LINUX}`);
     });
 
     $app.data.friendLogInitStatus = false;
+    $app.data.notificationInitStatus = false;
 
     $app.methods.initFriendLog = async function (currentUser) {
         this.refreshFriends(currentUser, true);
@@ -7321,7 +6064,7 @@ console.log(`isLinux: ${LINUX}`);
         var ref = API.cachedUsers.get(id);
         if (typeof ref === 'undefined') {
             try {
-                API.getUser({
+                userRequest.getUser({
                     userId: id
                 });
             } catch (err) {
@@ -7329,49 +6072,56 @@ console.log(`isLinux: ${LINUX}`);
             }
             return;
         }
-        API.getFriendStatus({
-            userId: id
-        }).then((args) => {
-            if (args.json.isFriend && !this.friendLog.has(id)) {
-                if (this.friendNumber === 0) {
-                    this.friendNumber = this.friends.size;
-                }
-                ref.$friendNumber = ++this.friendNumber;
-                configRepository.setInt(
-                    `VRCX_friendNumber_${API.currentUser.id}`,
-                    this.friendNumber
-                );
-                this.addFriend(id, ref.state);
-                var friendLogHistory = {
-                    created_at: new Date().toJSON(),
-                    type: 'Friend',
-                    userId: id,
-                    displayName: ref.displayName,
-                    friendNumber: ref.$friendNumber
-                };
-                this.friendLogTable.data.push(friendLogHistory);
-                database.addFriendLogHistory(friendLogHistory);
-                this.queueFriendLogNoty(friendLogHistory);
-                var friendLogCurrent = {
-                    userId: id,
-                    displayName: ref.displayName,
-                    trustLevel: ref.$trustLevel,
-                    friendNumber: ref.$friendNumber
-                };
-                this.friendLog.set(id, friendLogCurrent);
-                database.setFriendLogCurrent(friendLogCurrent);
-                this.notifyMenu('friendLog');
-                this.deleteFriendRequest(id);
-                this.updateSharedFeed(true);
-                API.getUser({
-                    userId: id
-                }).then(() => {
-                    if (this.userDialog.visible && id === this.userDialog.id) {
-                        this.applyUserDialogLocation(true);
+        friendRequest
+            .getFriendStatus({
+                userId: id
+            })
+            .then((args) => {
+                if (args.json.isFriend && !this.friendLog.has(id)) {
+                    if (this.friendNumber === 0) {
+                        this.friendNumber = this.friends.size;
                     }
-                });
-            }
-        });
+                    ref.$friendNumber = ++this.friendNumber;
+                    configRepository.setInt(
+                        `VRCX_friendNumber_${API.currentUser.id}`,
+                        this.friendNumber
+                    );
+                    this.addFriend(id, ref.state);
+                    var friendLogHistory = {
+                        created_at: new Date().toJSON(),
+                        type: 'Friend',
+                        userId: id,
+                        displayName: ref.displayName,
+                        friendNumber: ref.$friendNumber
+                    };
+                    this.friendLogTable.data.push(friendLogHistory);
+                    database.addFriendLogHistory(friendLogHistory);
+                    this.queueFriendLogNoty(friendLogHistory);
+                    var friendLogCurrent = {
+                        userId: id,
+                        displayName: ref.displayName,
+                        trustLevel: ref.$trustLevel,
+                        friendNumber: ref.$friendNumber
+                    };
+                    this.friendLog.set(id, friendLogCurrent);
+                    database.setFriendLogCurrent(friendLogCurrent);
+                    this.notifyMenu('friendLog');
+                    this.deleteFriendRequest(id);
+                    this.updateSharedFeed(true);
+                    userRequest
+                        .getUser({
+                            userId: id
+                        })
+                        .then(() => {
+                            if (
+                                this.userDialog.visible &&
+                                id === this.userDialog.id
+                            ) {
+                                this.applyUserDialogLocation(true);
+                            }
+                        });
+                }
+            });
     };
 
     $app.methods.deleteFriendRequest = function (userId) {
@@ -7392,28 +6142,30 @@ console.log(`isLinux: ${LINUX}`);
         if (typeof ctx === 'undefined') {
             return;
         }
-        API.getFriendStatus({
-            userId: id
-        }).then((args) => {
-            if (!args.json.isFriend && this.friendLog.has(id)) {
-                var friendLogHistory = {
-                    created_at: new Date().toJSON(),
-                    type: 'Unfriend',
-                    userId: id,
-                    displayName: ctx.displayName || id
-                };
-                this.friendLogTable.data.push(friendLogHistory);
-                database.addFriendLogHistory(friendLogHistory);
-                this.queueFriendLogNoty(friendLogHistory);
-                this.friendLog.delete(id);
-                database.deleteFriendLogCurrent(id);
-                if (!this.hideUnfriends) {
-                    this.notifyMenu('friendLog');
+        friendRequest
+            .getFriendStatus({
+                userId: id
+            })
+            .then((args) => {
+                if (!args.json.isFriend && this.friendLog.has(id)) {
+                    var friendLogHistory = {
+                        created_at: new Date().toJSON(),
+                        type: 'Unfriend',
+                        userId: id,
+                        displayName: ctx.displayName || id
+                    };
+                    this.friendLogTable.data.push(friendLogHistory);
+                    database.addFriendLogHistory(friendLogHistory);
+                    this.queueFriendLogNoty(friendLogHistory);
+                    this.friendLog.delete(id);
+                    database.deleteFriendLogCurrent(id);
+                    if (!this.hideUnfriends) {
+                        this.notifyMenu('friendLog');
+                    }
+                    this.updateSharedFeed(true);
+                    this.deleteFriend(id);
                 }
-                this.updateSharedFeed(true);
-                this.deleteFriend(id);
-            }
-        });
+            });
     };
 
     $app.methods.updateFriendships = function (ref) {
@@ -7638,37 +6390,40 @@ console.log(`isLinux: ${LINUX}`);
         }
 
         var L = $utils.parseLocation(currentLocation);
-        this.getCachedWorld({
-            worldId: L.worldId
-        }).then((args1) => {
-            this.sendInvite(
-                {
-                    instanceId: L.tag,
-                    worldId: L.tag,
-                    worldName: args1.ref.name,
-                    rsvp: true
-                },
-                ref.senderUserId
-            )
-                .then((_args) => {
-                    var text = `Auto invite sent to ${ref.senderUsername}`;
-                    if (this.errorNoty) {
-                        this.errorNoty.close();
-                    }
-                    this.errorNoty = new Noty({
-                        type: 'info',
-                        text
-                    }).show();
-                    console.log(text);
-                    API.hideNotification({
-                        notificationId: ref.id
+        worldRequest
+            .getCachedWorld({
+                worldId: L.worldId
+            })
+            .then((args1) => {
+                notificationRequest
+                    .sendInvite(
+                        {
+                            instanceId: L.tag,
+                            worldId: L.tag,
+                            worldName: args1.ref.name,
+                            rsvp: true
+                        },
+                        ref.senderUserId
+                    )
+                    .then((_args) => {
+                        var text = `Auto invite sent to ${ref.senderUsername}`;
+                        if (this.errorNoty) {
+                            this.errorNoty.close();
+                        }
+                        this.errorNoty = new Noty({
+                            type: 'info',
+                            text
+                        }).show();
+                        console.log(text);
+                        notificationRequest.hideNotification({
+                            notificationId: ref.id
+                        });
+                        return _args;
+                    })
+                    .catch((err) => {
+                        console.error(err);
                     });
-                    return _args;
-                })
-                .catch((err) => {
-                    console.error(err);
-                });
-        });
+            });
     });
 
     $app.data.unseenNotifications = [];
@@ -7691,7 +6446,7 @@ console.log(`isLinux: ${LINUX}`);
             ) {
                 database.addNotificationToDatabase(ref);
             }
-            if ($app.friendLogInitStatus) {
+            if ($app.friendLogInitStatus && $app.notificationInitStatus) {
                 if (
                     $app.notificationTable.filters[0].value.length === 0 ||
                     $app.notificationTable.filters[0].value.includes(ref.type)
@@ -7722,7 +6477,7 @@ console.log(`isLinux: ${LINUX}`);
             type: 'info',
             callback: (action) => {
                 if (action === 'confirm') {
-                    API.acceptFriendRequestNotification({
+                    notificationRequest.acceptFriendRequestNotification({
                         notificationId: row.id
                     });
                 }
@@ -7732,14 +6487,14 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.hideNotification = function (row) {
         if (row.type === 'ignoredFriendRequest') {
-            API.deleteHiddenFriendRequest(
+            friendRequest.deleteHiddenFriendRequest(
                 {
                     notificationId: row.id
                 },
                 row.senderUserId
             );
         } else {
-            API.hideNotification({
+            notificationRequest.hideNotification({
                 notificationId: row.id
             });
         }
@@ -7793,25 +6548,29 @@ console.log(`isLinux: ${LINUX}`);
                         currentLocation = this.lastLocationDestination;
                     }
                     var L = $utils.parseLocation(currentLocation);
-                    API.getCachedWorld({
-                        worldId: L.worldId
-                    }).then((args) => {
-                        API.sendInvite(
-                            {
-                                instanceId: L.tag,
-                                worldId: L.tag,
-                                worldName: args.ref.name,
-                                rsvp: true
-                            },
-                            row.senderUserId
-                        ).then((_args) => {
-                            this.$message('Invite sent');
-                            API.hideNotification({
-                                notificationId: row.id
-                            });
-                            return _args;
+                    worldRequest
+                        .getCachedWorld({
+                            worldId: L.worldId
+                        })
+                        .then((args) => {
+                            notificationRequest
+                                .sendInvite(
+                                    {
+                                        instanceId: L.tag,
+                                        worldId: L.tag,
+                                        worldName: args.ref.name,
+                                        rsvp: true
+                                    },
+                                    row.senderUserId
+                                )
+                                .then((_args) => {
+                                    this.$message('Invite sent');
+                                    notificationRequest.hideNotification({
+                                        notificationId: row.id
+                                    });
+                                    return _args;
+                                });
                         });
-                    });
                 }
             }
         });
@@ -7836,10 +6595,12 @@ console.log(`isLinux: ${LINUX}`);
         'VRCX_feedTableVIPFilter',
         false
     );
-    $app.data.gameLogTable.vip = await configRepository.getBool(
-        'VRCX_gameLogTableVIPFilter',
-        false
-    );
+    $app.data.gameLogTable.vip = false;
+    // gameLog loads before favorites
+    // await configRepository.getBool(
+    //     'VRCX_gameLogTableVIPFilter',
+    //     false
+    // );
     $app.data.gameLogTable.filter = JSON.parse(
         await configRepository.getString('VRCX_gameLogTableFilters', '[]')
     );
@@ -7921,23 +6682,6 @@ console.log(`isLinux: ${LINUX}`);
         },
         layout: 'table',
         visible: false
-    };
-    $app.data.friendsListTable = {
-        data: [],
-        tableProps: {
-            stripe: true,
-            size: 'mini',
-            defaultSort: {
-                prop: '$friendNumber',
-                order: 'descending'
-            }
-        },
-        pageSize: 100,
-        paginationProps: {
-            small: true,
-            layout: 'sizes,prev,pager,next,total',
-            pageSizes: [50, 100, 250, 500]
-        }
     };
     $app.data.socialStatusHistoryTable = {
         data: [],
@@ -8085,18 +6829,6 @@ console.log(`isLinux: ${LINUX}`);
         'VRCX_sidePanelWidth',
         300
     );
-    if (await configRepository.getInt('VRCX_asidewidth')) {
-        // migrate to new defaults
-        $app.data.asideWidth = await configRepository.getInt('VRCX_asidewidth');
-        if ($app.data.asideWidth < 300) {
-            $app.data.asideWidth = 300;
-        }
-        await configRepository.setInt(
-            'VRCX_sidePanelWidth',
-            $app.data.asideWidth
-        );
-        await configRepository.remove('VRCX_asidewidth');
-    }
     $app.data.autoUpdateVRCX = await configRepository.getString(
         'VRCX_autoUpdateVRCX',
         'Auto Download'
@@ -8132,9 +6864,22 @@ console.log(`isLinux: ${LINUX}`);
     $app.data.avatarRemoteDatabaseProviderList = JSON.parse(
         await configRepository.getString(
             'VRCX_avatarRemoteDatabaseProviderList',
-            '[ "https://avtr.just-h.party/vrcx_search.php" ]'
+            '[ "https://api.avtrdb.com/v2/avatar/search/vrcx", "https://avtr.just-h.party/vrcx_search.php" ]'
         )
     );
+    if (
+        $app.data.avatarRemoteDatabaseProviderList.length === 1 &&
+        $app.data.avatarRemoteDatabaseProviderList[0] ===
+            'https://avtr.just-h.party/vrcx_search.php'
+    ) {
+        $app.data.avatarRemoteDatabaseProviderList.unshift(
+            'https://api.avtrdb.com/v2/avatar/search/vrcx'
+        );
+        await configRepository.setString(
+            'VRCX_avatarRemoteDatabaseProviderList',
+            JSON.stringify($app.data.avatarRemoteDatabaseProviderList)
+        );
+    }
     $app.data.pendingOfflineDelay = 180000;
     if (await configRepository.getString('VRCX_avatarRemoteDatabaseProvider')) {
         // move existing provider to new list
@@ -9245,6 +7990,11 @@ console.log(`isLinux: ${LINUX}`);
         true
     );
 
+    $app.data.showConfirmationOnSwitchAvatar = await configRepository.getBool(
+        'VRCX_showConfirmationOnSwitchAvatar',
+        false
+    );
+
     $app.methods.updateVRConfigVars = function () {
         var notificationTheme = 'relax';
         if (this.isDarkMode) {
@@ -9516,18 +8266,20 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.verifyShortName = function (location, shortName) {
-        return API.getInstanceFromShortName({ shortName }).then((args) => {
-            var newLocation = args.json.location;
-            var newShortName = args.json.shortName;
-            if (newShortName) {
-                this.showWorldDialog(newLocation, newShortName);
-            } else if (newLocation) {
-                this.showWorldDialog(newLocation);
-            } else {
-                this.showWorldDialog(location);
-            }
-            return args;
-        });
+        return instanceRequest
+            .getInstanceFromShortName({ shortName })
+            .then((args) => {
+                var newLocation = args.json.location;
+                var newShortName = args.json.shortName;
+                if (newShortName) {
+                    this.showWorldDialog(newLocation, newShortName);
+                } else if (newLocation) {
+                    this.showWorldDialog(newLocation);
+                } else {
+                    this.showWorldDialog(location);
+                }
+                return args;
+            });
     };
 
     $app.methods.showGroupDialogShortCode = function (shortCode) {
@@ -9688,8 +8440,10 @@ console.log(`isLinux: ${LINUX}`);
             name: '',
             ownerId: '',
             privacy: '',
-            shortCode: ''
+            shortCode: '',
+            $thumbnailUrl: ''
         },
+        isRepresentedGroupLoading: false,
         joinCount: 0,
         timeSpent: 0,
         lastSeen: '',
@@ -9920,7 +8674,7 @@ console.log(`isLinux: ${LINUX}`);
             return;
         }
         this.$nextTick(() => $app.adjustDialogZ(this.$refs.userDialog.$el));
-        var D = this.userDialog;
+        const D = this.userDialog;
         D.id = userId;
         D.treeData = [];
         D.memo = '';
@@ -9929,12 +8683,11 @@ console.log(`isLinux: ${LINUX}`);
         this.getUserMemo(userId).then((memo) => {
             if (memo.userId === userId) {
                 D.memo = memo.memo;
-                var ref = this.friends.get(userId);
+                const ref = this.friends.get(userId);
                 if (ref) {
                     ref.memo = String(memo.memo || '');
                     if (memo.memo) {
-                        var array = memo.memo.split('\n');
-                        ref.$nickName = array[0];
+                        ref.$nickName = memo.memo.split('\n')[0];
                     } else {
                         ref.$nickName = '';
                     }
@@ -9954,6 +8707,7 @@ console.log(`isLinux: ${LINUX}`);
             shortName: '',
             ref: {}
         };
+        D.isRepresentedGroupLoading = true;
         D.representedGroup = {
             bannerUrl: '',
             description: '',
@@ -9966,7 +8720,8 @@ console.log(`isLinux: ${LINUX}`);
             name: '',
             ownerId: '',
             privacy: '',
-            shortCode: ''
+            shortCode: '',
+            $thumbnailUrl: ''
         };
         D.lastSeen = '';
         D.joinCount = 0;
@@ -9987,9 +8742,10 @@ console.log(`isLinux: ${LINUX}`);
             );
         }
         AppApi.SendIpc('ShowUserDialog', userId);
-        API.getCachedUser({
-            userId
-        })
+        userRequest
+            .getCachedUser({
+                userId
+            })
             .catch((err) => {
                 D.loading = false;
                 D.visible = false;
@@ -10001,172 +8757,192 @@ console.log(`isLinux: ${LINUX}`);
             })
             .then((args) => {
                 if (args.ref.id === D.id) {
-                    D.loading = false;
-                    D.ref = args.ref;
-                    D.friend = this.friends.get(D.id);
-                    D.isFriend = Boolean(D.friend);
-                    D.note = String(D.ref.note || '');
-                    D.incomingRequest = false;
-                    D.outgoingRequest = false;
-                    D.isBlock = false;
-                    D.isMute = false;
-                    D.isInteractOff = false;
-                    D.isMuteChat = false;
-                    for (var ref of API.cachedPlayerModerations.values()) {
-                        if (
-                            ref.targetUserId === D.id &&
-                            ref.sourceUserId === API.currentUser.id
-                        ) {
-                            if (ref.type === 'block') {
-                                D.isBlock = true;
-                            } else if (ref.type === 'mute') {
-                                D.isMute = true;
-                            } else if (ref.type === 'hideAvatar') {
-                                D.isHideAvatar = true;
-                            } else if (ref.type === 'interactOff') {
-                                D.isInteractOff = true;
-                            } else if (ref.type === 'muteChat') {
-                                D.isMuteChat = true;
+                    requestAnimationFrame(() => {
+                        D.ref = args.ref;
+                        D.friend = this.friends.get(D.id);
+                        D.isFriend = Boolean(D.friend);
+                        D.note = String(D.ref.note || '');
+                        D.incomingRequest = false;
+                        D.outgoingRequest = false;
+                        D.isBlock = false;
+                        D.isMute = false;
+                        D.isInteractOff = false;
+                        D.isMuteChat = false;
+                        for (const ref of API.cachedPlayerModerations.values()) {
+                            if (
+                                ref.targetUserId === D.id &&
+                                ref.sourceUserId === API.currentUser.id
+                            ) {
+                                if (ref.type === 'block') {
+                                    D.isBlock = true;
+                                } else if (ref.type === 'mute') {
+                                    D.isMute = true;
+                                } else if (ref.type === 'hideAvatar') {
+                                    D.isHideAvatar = true;
+                                } else if (ref.type === 'interactOff') {
+                                    D.isInteractOff = true;
+                                } else if (ref.type === 'muteChat') {
+                                    D.isMuteChat = true;
+                                }
                             }
                         }
-                    }
-                    D.isFavorite = API.cachedFavoritesByObjectId.has(D.id);
-                    if (D.ref.friendRequestStatus === 'incoming') {
-                        D.incomingRequest = true;
-                    } else if (D.ref.friendRequestStatus === 'outgoing') {
-                        D.outgoingRequest = true;
-                    }
-                    this.applyUserDialogLocation(true);
-                    if (this.$refs.userDialogTabs.currentName === '0') {
-                        this.userDialogLastActiveTab = $t(
-                            'dialog.user.info.header'
-                        );
-                    } else if (this.$refs.userDialogTabs.currentName === '1') {
-                        this.userDialogLastActiveTab = $t(
-                            'dialog.user.groups.header'
-                        );
-                        if (this.userDialogLastGroup !== userId) {
-                            this.userDialogLastGroup = userId;
-                            this.getUserGroups(userId);
+                        D.isFavorite = API.cachedFavoritesByObjectId.has(D.id);
+                        if (D.ref.friendRequestStatus === 'incoming') {
+                            D.incomingRequest = true;
+                        } else if (D.ref.friendRequestStatus === 'outgoing') {
+                            D.outgoingRequest = true;
                         }
-                    } else if (this.$refs.userDialogTabs.currentName === '2') {
-                        this.userDialogLastActiveTab = $t(
-                            'dialog.user.worlds.header'
-                        );
-                        this.setUserDialogWorlds(userId);
-                        if (this.userDialogLastWorld !== userId) {
-                            this.userDialogLastWorld = userId;
-                            this.refreshUserDialogWorlds();
+                        this.applyUserDialogLocation(true);
+
+                        // init last acitve tab data
+                        if (this.$refs.userDialogTabs.currentName === '0') {
+                            this.userDialogLastActiveTab = $t(
+                                'dialog.user.info.header'
+                            );
+                        } else if (
+                            this.$refs.userDialogTabs.currentName === '1'
+                        ) {
+                            this.userDialogLastActiveTab = $t(
+                                'dialog.user.groups.header'
+                            );
+                            if (this.userDialogLastGroup !== userId) {
+                                this.userDialogLastGroup = userId;
+                                this.getUserGroups(userId);
+                            }
+                        } else if (
+                            this.$refs.userDialogTabs.currentName === '2'
+                        ) {
+                            this.userDialogLastActiveTab = $t(
+                                'dialog.user.worlds.header'
+                            );
+                            this.setUserDialogWorlds(userId);
+                            if (this.userDialogLastWorld !== userId) {
+                                this.userDialogLastWorld = userId;
+                                this.refreshUserDialogWorlds();
+                            }
+                        } else if (
+                            this.$refs.userDialogTabs.currentName === '3'
+                        ) {
+                            this.userDialogLastActiveTab = $t(
+                                'dialog.user.favorite_worlds.header'
+                            );
+                            if (this.userDialogLastFavoriteWorld !== userId) {
+                                this.userDialogLastFavoriteWorld = userId;
+                                this.getUserFavoriteWorlds(userId);
+                            }
+                        } else if (
+                            this.$refs.userDialogTabs.currentName === '4'
+                        ) {
+                            this.userDialogLastActiveTab = $t(
+                                'dialog.user.avatars.header'
+                            );
+                            this.setUserDialogAvatars(userId);
+                            this.userDialogLastAvatar = userId;
+                            if (userId === API.currentUser.id) {
+                                this.refreshUserDialogAvatars();
+                            }
+                            this.setUserDialogAvatarsRemote(userId);
+                        } else if (
+                            this.$refs.userDialogTabs.currentName === '5'
+                        ) {
+                            this.userDialogLastActiveTab = $t(
+                                'dialog.user.json.header'
+                            );
+                            this.refreshUserDialogTreeData();
                         }
-                    } else if (this.$refs.userDialogTabs.currentName === '3') {
-                        this.userDialogLastActiveTab = $t(
-                            'dialog.user.favorite_worlds.header'
-                        );
-                        if (this.userDialogLastFavoriteWorld !== userId) {
-                            this.userDialogLastFavoriteWorld = userId;
-                            this.getUserFavoriteWorlds(userId);
+                        // init last acitve tab data - end
+
+                        if (args.cache) {
+                            userRequest.getUser(args.params);
                         }
-                    } else if (this.$refs.userDialogTabs.currentName === '4') {
-                        this.userDialogLastActiveTab = $t(
-                            'dialog.user.avatars.header'
-                        );
-                        this.setUserDialogAvatars(userId);
-                        this.userDialogLastAvatar = userId;
-                        if (userId === API.currentUser.id) {
-                            this.refreshUserDialogAvatars();
+                        let inCurrentWorld = false;
+                        if (this.lastLocation.playerList.has(D.ref.id)) {
+                            inCurrentWorld = true;
                         }
-                        this.setUserDialogAvatarsRemote(userId);
-                    } else if (this.$refs.userDialogTabs.currentName === '5') {
-                        this.userDialogLastActiveTab = $t(
-                            'dialog.user.json.header'
-                        );
-                        this.refreshUserDialogTreeData();
-                    }
-                    if (args.cache) {
-                        API.getUser(args.params);
-                    }
-                    var inCurrentWorld = false;
-                    if (this.lastLocation.playerList.has(D.ref.id)) {
-                        inCurrentWorld = true;
-                    }
-                    if (userId !== API.currentUser.id) {
-                        database
-                            .getUserStats(D.ref, inCurrentWorld)
-                            .then((ref1) => {
-                                if (ref1.userId === D.id) {
-                                    D.lastSeen = ref1.lastSeen;
-                                    D.joinCount = ref1.joinCount;
-                                    D.timeSpent = ref1.timeSpent;
-                                }
-                                var displayNameMap = ref1.previousDisplayNames;
-                                this.friendLogTable.data.forEach((ref2) => {
-                                    if (ref2.userId === D.id) {
-                                        if (ref2.type === 'DisplayName') {
-                                            displayNameMap.set(
-                                                ref2.previousDisplayName,
-                                                ref2.created_at
-                                            );
-                                        }
-                                        if (!D.dateFriended) {
-                                            if (ref2.type === 'Unfriend') {
-                                                D.unFriended = true;
-                                                if (!this.hideUnfriends) {
+                        if (userId !== API.currentUser.id) {
+                            database
+                                .getUserStats(D.ref, inCurrentWorld)
+                                .then((ref1) => {
+                                    if (ref1.userId === D.id) {
+                                        D.lastSeen = ref1.lastSeen;
+                                        D.joinCount = ref1.joinCount;
+                                        D.timeSpent = ref1.timeSpent;
+                                    }
+                                    let displayNameMap =
+                                        ref1.previousDisplayNames;
+                                    this.friendLogTable.data.forEach((ref2) => {
+                                        if (ref2.userId === D.id) {
+                                            if (ref2.type === 'DisplayName') {
+                                                displayNameMap.set(
+                                                    ref2.previousDisplayName,
+                                                    ref2.created_at
+                                                );
+                                            }
+                                            if (!D.dateFriended) {
+                                                if (ref2.type === 'Unfriend') {
+                                                    D.unFriended = true;
+                                                    if (!this.hideUnfriends) {
+                                                        D.dateFriended =
+                                                            ref2.created_at;
+                                                    }
+                                                }
+                                                if (ref2.type === 'Friend') {
+                                                    D.unFriended = false;
                                                     D.dateFriended =
                                                         ref2.created_at;
                                                 }
                                             }
-                                            if (ref2.type === 'Friend') {
-                                                D.unFriended = false;
-                                                D.dateFriended =
-                                                    ref2.created_at;
+                                            if (
+                                                ref2.type === 'Friend' ||
+                                                (ref2.type === 'Unfriend' &&
+                                                    !this.hideUnfriends)
+                                            ) {
+                                                D.dateFriendedInfo.push(ref2);
                                             }
                                         }
-                                        if (
-                                            ref2.type === 'Friend' ||
-                                            (ref2.type === 'Unfriend' &&
-                                                !this.hideUnfriends)
-                                        ) {
-                                            D.dateFriendedInfo.push(ref2);
-                                        }
-                                    }
+                                    });
+                                    const displayNameMapSorted = new Map(
+                                        [...displayNameMap.entries()].sort(
+                                            (a, b) => b[1] - a[1]
+                                        )
+                                    );
+                                    D.previousDisplayNames = Array.from(
+                                        displayNameMapSorted.keys()
+                                    );
                                 });
-                                var displayNameMapSorted = new Map(
-                                    [...displayNameMap.entries()].sort(
-                                        (a, b) => b[1] - a[1]
-                                    )
-                                );
-                                D.previousDisplayNames = Array.from(
-                                    displayNameMapSorted.keys()
-                                );
-                            });
-                        AppApi.GetVRChatUserModeration(
-                            API.currentUser.id,
-                            userId
-                        ).then((result) => {
-                            D.avatarModeration = result;
-                            if (result === 4) {
-                                D.isHideAvatar = true;
-                            } else if (result === 5) {
-                                D.isShowAvatar = true;
-                            }
-                        });
-                    } else {
-                        database
-                            .getUserStats(D.ref, inCurrentWorld)
-                            .then((ref1) => {
-                                if (ref1.userId === D.id) {
-                                    D.lastSeen = ref1.lastSeen;
-                                    D.joinCount = ref1.joinCount;
-                                    D.timeSpent = ref1.timeSpent;
+                            AppApi.GetVRChatUserModeration(
+                                API.currentUser.id,
+                                userId
+                            ).then((result) => {
+                                D.avatarModeration = result;
+                                if (result === 4) {
+                                    D.isHideAvatar = true;
+                                } else if (result === 5) {
+                                    D.isShowAvatar = true;
                                 }
                             });
-                    }
-                    API.getRepresentedGroup({ userId }).then((args1) => {
-                        D.representedGroup = args1.json;
-                        return args1;
+                        } else {
+                            database
+                                .getUserStats(D.ref, inCurrentWorld)
+                                .then((ref1) => {
+                                    if (ref1.userId === D.id) {
+                                        D.lastSeen = ref1.lastSeen;
+                                        D.joinCount = ref1.joinCount;
+                                        D.timeSpent = ref1.timeSpent;
+                                    }
+                                });
+                        }
+                        API.getRepresentedGroup({ userId }).then((args1) => {
+                            D.representedGroup = args1.json;
+                            D.representedGroup.$thumbnailUrl =
+                                this.getSmallThumbnailUrl(args1.json.iconUrl);
+                            if (!args1.json || !args1.json.isRepresenting) {
+                                D.isRepresentedGroupLoading = false;
+                            }
+                        });
+                        D.loading = false;
                     });
                 }
-                return args;
             });
         this.showUserDialogHistory.delete(userId);
         this.showUserDialogHistory.add(userId);
@@ -10178,8 +8954,8 @@ console.log(`isLinux: ${LINUX}`);
             return;
         }
         var L = $utils.parseLocation(D.ref.$location.tag);
-        if (updateInstanceOccupants && this.isRealInstance(L.tag)) {
-            API.getInstance({
+        if (updateInstanceOccupants && L.isRealInstance) {
+            instanceRequest.getInstance({
                 worldId: L.worldId,
                 instanceId: L.instanceId
             });
@@ -10188,12 +8964,14 @@ console.log(`isLinux: ${LINUX}`);
         if (L.userId) {
             var ref = API.cachedUsers.get(L.userId);
             if (typeof ref === 'undefined') {
-                API.getUser({
-                    userId: L.userId
-                }).then((args) => {
-                    Vue.set(L, 'user', args.ref);
-                    return args;
-                });
+                userRequest
+                    .getUser({
+                        userId: L.userId
+                    })
+                    .then((args) => {
+                        Vue.set(L, 'user', args.ref);
+                        return args;
+                    });
             } else {
                 L.user = ref;
             }
@@ -10278,7 +9056,7 @@ console.log(`isLinux: ${LINUX}`);
                 ref: {}
             };
         }
-        if (!this.isRealInstance(L.tag)) {
+        if (!L.isRealInstance) {
             D.instance = {
                 id: L.instanceId,
                 tag: L.tag,
@@ -10499,7 +9277,6 @@ console.log(`isLinux: ${LINUX}`);
         isIos: false,
         avatarScalingDisabled: false,
         focusViewDisabled: false,
-        stickersDisabled: false,
         inCache: false,
         cacheSize: '',
         bundleSizes: [],
@@ -10523,7 +9300,6 @@ console.log(`isLinux: ${LINUX}`);
                 isIos: false,
                 avatarScalingDisabled: false,
                 focusViewDisabled: false,
-                stickersDisabled: false,
                 inCache: false,
                 cacheSize: '',
                 bundleSizes: [],
@@ -10539,7 +9315,6 @@ console.log(`isLinux: ${LINUX}`);
                 isIos: false,
                 avatarScalingDisabled: false,
                 focusViewDisabled: false,
-                stickersDisabled: false,
                 inCache: false,
                 cacheSize: '',
                 bundleSizes: [],
@@ -10547,68 +9322,76 @@ console.log(`isLinux: ${LINUX}`);
             };
             var L = $utils.parseLocation(instanceId);
             this.currentInstanceLocation = L;
-            API.getWorld({
-                worldId: L.worldId
-            }).then((args) => {
-                this.currentInstanceWorld.ref = args.ref;
-                var { isPC, isQuest, isIos } = this.getAvailablePlatforms(
-                    args.ref.unityPackages
-                );
-                this.currentInstanceWorld.isPC = isPC;
-                this.currentInstanceWorld.isQuest = isQuest;
-                this.currentInstanceWorld.isIos = isIos;
-                this.currentInstanceWorld.avatarScalingDisabled =
-                    args.ref?.tags.includes('feature_avatar_scaling_disabled');
-                this.currentInstanceWorld.focusViewDisabled =
-                    args.ref?.tags.includes('feature_focus_view_disabled');
-                this.currentInstanceWorld.stickersDisabled =
-                    args.ref?.tags.includes('feature_stickers_disabled');
-                this.checkVRChatCache(args.ref).then((cacheInfo) => {
-                    if (cacheInfo.Item1 > 0) {
-                        this.currentInstanceWorld.inCache = true;
-                        this.currentInstanceWorld.cacheSize = `${(
-                            cacheInfo.Item1 / 1048576
-                        ).toFixed(2)} MB`;
-                    }
+            worldRequest
+                .getWorld({
+                    worldId: L.worldId
+                })
+                .then((args) => {
+                    this.currentInstanceWorld.ref = args.ref;
+                    var { isPC, isQuest, isIos } = this.getAvailablePlatforms(
+                        args.ref.unityPackages
+                    );
+                    this.currentInstanceWorld.isPC = isPC;
+                    this.currentInstanceWorld.isQuest = isQuest;
+                    this.currentInstanceWorld.isIos = isIos;
+                    this.currentInstanceWorld.avatarScalingDisabled =
+                        args.ref?.tags.includes(
+                            'feature_avatar_scaling_disabled'
+                        );
+                    this.currentInstanceWorld.focusViewDisabled =
+                        args.ref?.tags.includes('feature_focus_view_disabled');
+                    this.checkVRChatCache(args.ref).then((cacheInfo) => {
+                        if (cacheInfo.Item1 > 0) {
+                            this.currentInstanceWorld.inCache = true;
+                            this.currentInstanceWorld.cacheSize = `${(
+                                cacheInfo.Item1 / 1048576
+                            ).toFixed(2)} MB`;
+                        }
+                    });
+                    this.getBundleDateSize(args.ref).then((bundleSizes) => {
+                        this.currentInstanceWorld.bundleSizes = bundleSizes;
+                    });
+                    return args;
                 });
-                this.getBundleDateSize(args.ref).then((bundleSizes) => {
-                    this.currentInstanceWorld.bundleSizes = bundleSizes;
-                });
-                return args;
-            });
         } else {
-            API.getCachedWorld({
-                worldId: this.currentInstanceLocation.worldId
-            }).then((args) => {
-                this.currentInstanceWorld.ref = args.ref;
-                var { isPC, isQuest, isIos } = this.getAvailablePlatforms(
-                    args.ref.unityPackages
-                );
-                this.currentInstanceWorld.isPC = isPC;
-                this.currentInstanceWorld.isQuest = isQuest;
-                this.currentInstanceWorld.isIos = isIos;
-                this.checkVRChatCache(args.ref).then((cacheInfo) => {
-                    if (cacheInfo.Item1 > 0) {
-                        this.currentInstanceWorld.inCache = true;
-                        this.currentInstanceWorld.cacheSize = `${(
-                            cacheInfo.Item1 / 1048576
-                        ).toFixed(2)} MB`;
-                    }
+            worldRequest
+                .getCachedWorld({
+                    worldId: this.currentInstanceLocation.worldId
+                })
+                .then((args) => {
+                    this.currentInstanceWorld.ref = args.ref;
+                    var { isPC, isQuest, isIos } = this.getAvailablePlatforms(
+                        args.ref.unityPackages
+                    );
+                    this.currentInstanceWorld.isPC = isPC;
+                    this.currentInstanceWorld.isQuest = isQuest;
+                    this.currentInstanceWorld.isIos = isIos;
+                    this.checkVRChatCache(args.ref).then((cacheInfo) => {
+                        if (cacheInfo.Item1 > 0) {
+                            this.currentInstanceWorld.inCache = true;
+                            this.currentInstanceWorld.cacheSize = `${(
+                                cacheInfo.Item1 / 1048576
+                            ).toFixed(2)} MB`;
+                        }
+                    });
                 });
-            });
         }
-        if (this.isRealInstance(instanceId)) {
+        if ($utils.isRealInstance(instanceId)) {
             var ref = API.cachedInstances.get(instanceId);
             if (typeof ref !== 'undefined') {
                 this.currentInstanceWorld.instance = ref;
             } else {
                 var L = $utils.parseLocation(instanceId);
-                API.getInstance({
-                    worldId: L.worldId,
-                    instanceId: L.instanceId
-                }).then((args) => {
-                    this.currentInstanceWorld.instance = args.ref;
-                });
+                if (L.isRealInstance) {
+                    instanceRequest
+                        .getInstance({
+                            worldId: L.worldId,
+                            instanceId: L.instanceId
+                        })
+                        .then((args) => {
+                            this.currentInstanceWorld.instance = args.ref;
+                        });
+                }
             }
         }
     };
@@ -10921,7 +9704,7 @@ console.log(`isLinux: ${LINUX}`);
             }
         }
         API.bulk({
-            fn: 'getWorlds',
+            fn: worldRequest.getWorlds,
             N: -1,
             params,
             handle: (args) => {
@@ -10967,7 +9750,7 @@ console.log(`isLinux: ${LINUX}`);
         }
         var map = new Map();
         API.bulk({
-            fn: 'getAvatars',
+            fn: avatarRequest.getAvatars,
             N: -1,
             params,
             handle: (args) => {
@@ -11002,18 +9785,18 @@ console.log(`isLinux: ${LINUX}`);
     var performUserDialogCommand = (command, userId) => {
         switch (command) {
             case 'Delete Favorite':
-                API.deleteFavorite({
+                favoriteRequest.deleteFavorite({
                     objectId: userId
                 });
                 break;
             case 'Accept Friend Request':
                 var key = API.getFriendRequest(userId);
                 if (key === '') {
-                    API.sendFriendRequest({
+                    friendRequest.sendFriendRequest({
                         userId
                     });
                 } else {
-                    API.acceptFriendRequestNotification({
+                    notificationRequest.acceptFriendRequestNotification({
                         notificationId: key
                     });
                 }
@@ -11021,69 +9804,69 @@ console.log(`isLinux: ${LINUX}`);
             case 'Decline Friend Request':
                 var key = API.getFriendRequest(userId);
                 if (key === '') {
-                    API.cancelFriendRequest({
+                    friendRequest.cancelFriendRequest({
                         userId
                     });
                 } else {
-                    API.hideNotification({
+                    notificationRequest.hideNotification({
                         notificationId: key
                     });
                 }
                 break;
             case 'Cancel Friend Request':
-                API.cancelFriendRequest({
+                friendRequest.cancelFriendRequest({
                     userId
                 });
                 break;
             case 'Send Friend Request':
-                API.sendFriendRequest({
+                friendRequest.sendFriendRequest({
                     userId
                 });
                 break;
             case 'Moderation Unblock':
-                API.deletePlayerModeration({
+                playerModerationRequest.deletePlayerModeration({
                     moderated: userId,
                     type: 'block'
                 });
                 break;
             case 'Moderation Block':
-                API.sendPlayerModeration({
+                playerModerationRequest.sendPlayerModeration({
                     moderated: userId,
                     type: 'block'
                 });
                 break;
             case 'Moderation Unmute':
-                API.deletePlayerModeration({
+                playerModerationRequest.deletePlayerModeration({
                     moderated: userId,
                     type: 'mute'
                 });
                 break;
             case 'Moderation Mute':
-                API.sendPlayerModeration({
+                playerModerationRequest.sendPlayerModeration({
                     moderated: userId,
                     type: 'mute'
                 });
                 break;
             case 'Moderation Enable Avatar Interaction':
-                API.deletePlayerModeration({
+                playerModerationRequest.deletePlayerModeration({
                     moderated: userId,
                     type: 'interactOff'
                 });
                 break;
             case 'Moderation Disable Avatar Interaction':
-                API.sendPlayerModeration({
+                playerModerationRequest.sendPlayerModeration({
                     moderated: userId,
                     type: 'interactOff'
                 });
                 break;
             case 'Moderation Enable Chatbox':
-                API.deletePlayerModeration({
+                playerModerationRequest.deletePlayerModeration({
                     moderated: userId,
                     type: 'muteChat'
                 });
                 break;
             case 'Moderation Disable Chatbox':
-                API.sendPlayerModeration({
+                playerModerationRequest.sendPlayerModeration({
                     moderated: userId,
                     type: 'muteChat'
                 });
@@ -11092,7 +9875,7 @@ console.log(`isLinux: ${LINUX}`);
                 $app.reportUserForHacking(userId);
                 break;
             case 'Unfriend':
-                API.deleteFriend({
+                friendRequest.deleteFriend({
                     userId
                 });
                 break;
@@ -11121,29 +9904,33 @@ console.log(`isLinux: ${LINUX}`);
         } else if (command === 'Logout') {
             this.logout();
         } else if (command === 'Request Invite') {
-            API.sendRequestInvite(
-                {
-                    platform: 'standalonewindows'
-                },
-                D.id
-            ).then((args) => {
-                this.$message('Request invite sent');
-                return args;
-            });
-        } else if (command === 'Invite Message') {
-            var L = $utils.parseLocation(this.lastLocation.location);
-            API.getCachedWorld({
-                worldId: L.worldId
-            }).then((args) => {
-                this.showSendInviteDialog(
+            notificationRequest
+                .sendRequestInvite(
                     {
-                        instanceId: this.lastLocation.location,
-                        worldId: this.lastLocation.location,
-                        worldName: args.ref.name
+                        platform: 'standalonewindows'
                     },
                     D.id
-                );
-            });
+                )
+                .then((args) => {
+                    this.$message('Request invite sent');
+                    return args;
+                });
+        } else if (command === 'Invite Message') {
+            var L = $utils.parseLocation(this.lastLocation.location);
+            worldRequest
+                .getCachedWorld({
+                    worldId: L.worldId
+                })
+                .then((args) => {
+                    this.showSendInviteDialog(
+                        {
+                            instanceId: this.lastLocation.location,
+                            worldId: this.lastLocation.location,
+                            worldName: args.ref.name
+                        },
+                        D.id
+                    );
+                });
         } else if (command === 'Request Invite Message') {
             this.showSendInviteRequestDialog(
                 {
@@ -11157,21 +9944,25 @@ console.log(`isLinux: ${LINUX}`);
                 currentLocation = this.lastLocationDestination;
             }
             var L = $utils.parseLocation(currentLocation);
-            API.getCachedWorld({
-                worldId: L.worldId
-            }).then((args) => {
-                API.sendInvite(
-                    {
-                        instanceId: L.tag,
-                        worldId: L.tag,
-                        worldName: args.ref.name
-                    },
-                    D.id
-                ).then((_args) => {
-                    this.$message('Invite sent');
-                    return _args;
+            worldRequest
+                .getCachedWorld({
+                    worldId: L.worldId
+                })
+                .then((args) => {
+                    notificationRequest
+                        .sendInvite(
+                            {
+                                instanceId: L.tag,
+                                worldId: L.tag,
+                                worldName: args.ref.name
+                            },
+                            D.id
+                        )
+                        .then((_args) => {
+                            this.$message('Invite sent');
+                            return _args;
+                        });
                 });
-            });
         } else if (command === 'Show Avatar Author') {
             var { currentAvatarImageUrl } = D.ref;
             this.showAvatarAuthorDialog(
@@ -11252,8 +10043,9 @@ console.log(`isLinux: ${LINUX}`);
         D.treeData = $utils.buildTreeData(D.ref);
     };
 
-    $app.methods.changeUserDialogAvatarSorting = function () {
-        var D = this.userDialog;
+    $app.methods.changeUserDialogAvatarSorting = function (sortOption) {
+        const D = this.userDialog;
+        D.avatarSorting = sortOption;
         this.sortUserDialogAvatars(D.avatars);
     };
 
@@ -11283,7 +10075,6 @@ console.log(`isLinux: ${LINUX}`);
         isFavorite: false,
         avatarScalingDisabled: false,
         focusViewDisabled: false,
-        stickersDisabled: false,
         rooms: [],
         treeData: [],
         bundleSizes: [],
@@ -11316,11 +10107,10 @@ console.log(`isLinux: ${LINUX}`);
             'feature_avatar_scaling_disabled'
         );
         D.focusViewDisabled = ref.tags?.includes('feature_focus_view_disabled');
-        D.stickersDisabled = ref.tags?.includes('feature_stickers_disabled');
         $app.applyWorldDialogInstances();
         for (var room of D.rooms) {
-            if ($app.isRealInstance(room.tag)) {
-                API.getInstance({
+            if ($utils.isRealInstance(room.tag)) {
+                instanceRequest.getInstance({
                     worldId: D.id,
                     instanceId: room.id
                 });
@@ -11358,7 +10148,7 @@ console.log(`isLinux: ${LINUX}`);
             if (!fileId) {
                 continue;
             }
-            var args = await API.getBundles(fileId);
+            var args = await miscRequest.getBundles(fileId);
             if (!args?.json?.versions) {
                 continue;
             }
@@ -11433,9 +10223,8 @@ console.log(`isLinux: ${LINUX}`);
     });
 
     $app.methods.showWorldDialog = function (tag, shortName) {
-        this.$nextTick(() => $app.adjustDialogZ(this.$refs.worldDialog.$el));
-        var D = this.worldDialog;
-        var L = $utils.parseLocation(tag);
+        const D = this.worldDialog;
+        const L = $utils.parseLocation(tag);
         if (L.worldId === '') {
             return;
         }
@@ -11457,7 +10246,6 @@ console.log(`isLinux: ${LINUX}`);
         D.isFavorite = false;
         D.avatarScalingDisabled = false;
         D.focusViewDisabled = false;
-        D.stickersDisabled = false;
         D.isPC = false;
         D.isQuest = false;
         D.isIos = false;
@@ -11488,9 +10276,10 @@ console.log(`isLinux: ${LINUX}`);
                 D.timeSpent = ref.timeSpent;
             }
         });
-        API.getCachedWorld({
-            worldId: L.worldId
-        })
+        worldRequest
+            .getCachedWorld({
+                worldId: L.worldId
+            })
             .catch((err) => {
                 D.loading = false;
                 D.visible = false;
@@ -11519,16 +10308,14 @@ console.log(`isLinux: ${LINUX}`);
                     D.focusViewDisabled = args.ref?.tags.includes(
                         'feature_focus_view_disabled'
                     );
-                    D.stickersDisabled = args.ref?.tags.includes(
-                        'feature_stickers_disabled'
-                    );
                     D.isPC = isPC;
                     D.isQuest = isQuest;
                     D.isIos = isIos;
                     this.updateVRChatWorldCache();
-                    API.hasWorldPersistData({ worldId: D.id });
+                    miscRequest.hasWorldPersistData({ worldId: D.id });
                     if (args.cache) {
-                        API.getWorld(args.params)
+                        worldRequest
+                            .getWorld(args.params)
                             .catch((err) => {
                                 throw err;
                             })
@@ -11669,12 +10456,14 @@ console.log(`isLinux: ${LINUX}`);
             if (L.userId) {
                 var ref = API.cachedUsers.get(L.userId);
                 if (typeof ref === 'undefined') {
-                    API.getUser({
-                        userId: L.userId
-                    }).then((args) => {
-                        Vue.set(L, 'user', args.ref);
-                        return args;
-                    });
+                    userRequest
+                        .getUser({
+                            userId: L.userId
+                        })
+                        .then((args) => {
+                            Vue.set(L, 'user', args.ref);
+                            return args;
+                        });
                 } else {
                     L.user = ref;
                 }
@@ -11861,8 +10650,8 @@ console.log(`isLinux: ${LINUX}`);
             var ref = API.cachedInstances.get(room.tag);
             if (typeof ref !== 'undefined') {
                 room.ref = ref;
-            } else if ($app.isRealInstance(room.tag)) {
-                API.getInstance({
+            } else if ($utils.isRealInstance(room.tag)) {
+                instanceRequest.getInstance({
                     worldId: room.$location.worldId,
                     instanceId: room.$location.instanceId
                 });
@@ -11901,9 +10690,6 @@ console.log(`isLinux: ${LINUX}`);
         switch (command) {
             case 'Refresh':
                 this.showWorldDialog(D.id);
-                break;
-            case 'Share':
-                this.copyWorldUrl(D.id);
                 break;
             case 'New Instance':
                 this.showNewInstanceDialog(D.$location.tag);
@@ -11962,7 +10748,7 @@ console.log(`isLinux: ${LINUX}`);
                         }
                         switch (command) {
                             case 'Delete Favorite':
-                                API.deleteFavorite({
+                                favoriteRequest.deleteFavorite({
                                     objectId: D.id
                                 });
                                 break;
@@ -11989,50 +10775,59 @@ console.log(`isLinux: ${LINUX}`);
                                 });
                                 break;
                             case 'Publish':
-                                API.publishWorld({
-                                    worldId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'World has been published',
-                                        type: 'success'
+                                worldRequest
+                                    .publishWorld({
+                                        worldId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message: 'World has been published',
+                                            type: 'success'
+                                        });
+                                        return args;
                                     });
-                                    return args;
-                                });
                                 break;
                             case 'Unpublish':
-                                API.unpublishWorld({
-                                    worldId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'World has been unpublished',
-                                        type: 'success'
+                                worldRequest
+                                    .unpublishWorld({
+                                        worldId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message:
+                                                'World has been unpublished',
+                                            type: 'success'
+                                        });
+                                        return args;
                                     });
-                                    return args;
-                                });
                                 break;
                             case 'Delete Persistent Data':
-                                API.deleteWorldPersistData({
-                                    worldId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message:
-                                            'Persistent data has been deleted',
-                                        type: 'success'
+                                miscRequest
+                                    .deleteWorldPersistData({
+                                        worldId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message:
+                                                'Persistent data has been deleted',
+                                            type: 'success'
+                                        });
+                                        return args;
                                     });
-                                    return args;
-                                });
                                 break;
                             case 'Delete':
-                                API.deleteWorld({
-                                    worldId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'World has been deleted',
-                                        type: 'success'
+                                worldRequest
+                                    .deleteWorld({
+                                        worldId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message: 'World has been deleted',
+                                            type: 'success'
+                                        });
+                                        D.visible = false;
+                                        return args;
                                     });
-                                    D.visible = false;
-                                    return args;
-                                });
                                 break;
                         }
                     }
@@ -12053,30 +10848,6 @@ console.log(`isLinux: ${LINUX}`);
             }
             this.selfInvite(args.json.location);
         });
-    };
-
-    $app.methods.refreshWorldDialogTreeData = function () {
-        var D = this.worldDialog;
-        D.treeData = $utils.buildTreeData(D.ref);
-    };
-
-    $app.computed.worldDialogPlatform = function () {
-        var { ref } = this.worldDialog;
-        var platforms = [];
-        if (ref.unityPackages) {
-            for (var unityPackage of ref.unityPackages) {
-                var platform = 'PC';
-                if (unityPackage.platform === 'standalonewindows') {
-                    platform = 'PC';
-                } else if (unityPackage.platform === 'android') {
-                    platform = 'Android';
-                } else if (unityPackage.platform) {
-                    ({ platform } = unityPackage);
-                }
-                platforms.unshift(`${platform}/${unityPackage.unityVersion}`);
-            }
-        }
-        return platforms.join(', ');
     };
 
     // #endregion
@@ -12153,7 +10924,7 @@ console.log(`isLinux: ${LINUX}`);
         D.timeSpent = 0;
         D.isFavorite =
             API.cachedFavoritesByObjectId.has(avatarId) ||
-            (this.isLocalUserVrcplusSupporter() &&
+            (API.currentUser.$isVRCPlus &&
                 this.localAvatarFavoritesList.includes(avatarId));
         D.isBlocked = API.cachedAvatarModerations.has(avatarId);
         D.memo = '';
@@ -12181,7 +10952,8 @@ console.log(`isLinux: ${LINUX}`);
                 }
             }
         });
-        API.getAvatar({ avatarId })
+        avatarRequest
+            .getAvatar({ avatarId })
             .then((args) => {
                 var { ref } = args;
                 D.ref = ref;
@@ -12231,6 +11003,20 @@ console.log(`isLinux: ${LINUX}`);
         });
     };
 
+    $app.methods.selectAvatar = function (id) {
+        avatarRequest
+            .selectAvatar({
+                avatarId: id
+            })
+            .then((args) => {
+                this.$message({
+                    message: 'Avatar changed',
+                    type: 'success'
+                });
+                return args;
+            });
+    };
+
     $app.methods.selectAvatarWithConfirmation = function (id) {
         this.$confirm(`Continue? Select Avatar`, 'Confirm', {
             confirmButtonText: 'Confirm',
@@ -12240,17 +11026,30 @@ console.log(`isLinux: ${LINUX}`);
                 if (action !== 'confirm') {
                     return;
                 }
-                API.selectAvatar({
-                    avatarId: id
-                }).then((args) => {
-                    this.$message({
-                        message: 'Avatar changed',
-                        type: 'success'
-                    });
-                    return args;
-                });
+                $app.selectAvatarWithoutConfirmation(id);
             }
         });
+    };
+
+    $app.methods.selectAvatarWithoutConfirmation = function (id) {
+        if (API.currentUser.currentAvatar === id) {
+            this.$message({
+                message: 'Avatar already selected',
+                type: 'info'
+            });
+            return;
+        }
+        avatarRequest
+            .selectAvatar({
+                avatarId: id
+            })
+            .then((args) => {
+                new Noty({
+                    type: 'success',
+                    text: 'Avatar changed via launch command'
+                }).show();
+                return args;
+            });
     };
 
     $app.methods.avatarDialogCommand = function (command) {
@@ -12261,6 +11060,9 @@ console.log(`isLinux: ${LINUX}`);
         switch (command) {
             case 'Refresh':
                 this.showAvatarDialog(D.id);
+                break;
+            case 'Share':
+                this.copyAvatarUrl(D.id);
                 break;
             case 'Rename':
                 this.promptRenameAvatar(D);
@@ -12298,127 +11100,135 @@ console.log(`isLinux: ${LINUX}`);
                         }
                         switch (command) {
                             case 'Delete Favorite':
-                                API.deleteFavorite({
+                                favoriteRequest.deleteFavorite({
                                     objectId: D.id
                                 });
                                 break;
-                            case 'Select Avatar':
-                                API.selectAvatar({
-                                    avatarId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'Avatar changed',
-                                        type: 'success'
-                                    });
-                                    return args;
-                                });
-                                break;
                             case 'Select Fallback Avatar':
-                                API.selectFallbackAvatar({
-                                    avatarId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'Fallback avatar changed',
-                                        type: 'success'
+                                avatarRequest
+                                    .selectFallbackAvatar({
+                                        avatarId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message: 'Fallback avatar changed',
+                                            type: 'success'
+                                        });
+                                        return args;
                                     });
-                                    return args;
-                                });
                                 break;
                             case 'Block Avatar':
-                                API.sendAvatarModeration({
-                                    avatarModerationType: 'block',
-                                    targetAvatarId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'Avatar blocked',
-                                        type: 'success'
+                                avatarModerationRequest
+                                    .sendAvatarModeration({
+                                        avatarModerationType: 'block',
+                                        targetAvatarId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message: 'Avatar blocked',
+                                            type: 'success'
+                                        });
+                                        return args;
                                     });
-                                    return args;
-                                });
                                 break;
                             case 'Unblock Avatar':
-                                API.deleteAvatarModeration({
+                                avatarModerationRequest.deleteAvatarModeration({
                                     avatarModerationType: 'block',
                                     targetAvatarId: D.id
                                 });
                                 break;
                             case 'Make Public':
-                                API.saveAvatar({
-                                    id: D.id,
-                                    releaseStatus: 'public'
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'Avatar updated to public',
-                                        type: 'success'
+                                avatarRequest
+                                    .saveAvatar({
+                                        id: D.id,
+                                        releaseStatus: 'public'
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message: 'Avatar updated to public',
+                                            type: 'success'
+                                        });
+                                        return args;
                                     });
-                                    return args;
-                                });
                                 break;
                             case 'Make Private':
-                                API.saveAvatar({
-                                    id: D.id,
-                                    releaseStatus: 'private'
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'Avatar updated to private',
-                                        type: 'success'
+                                avatarRequest
+                                    .saveAvatar({
+                                        id: D.id,
+                                        releaseStatus: 'private'
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message:
+                                                'Avatar updated to private',
+                                            type: 'success'
+                                        });
+                                        return args;
                                     });
-                                    return args;
-                                });
                                 break;
                             case 'Delete':
-                                API.deleteAvatar({
-                                    avatarId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'Avatar deleted',
-                                        type: 'success'
+                                avatarRequest
+                                    .deleteAvatar({
+                                        avatarId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message: 'Avatar deleted',
+                                            type: 'success'
+                                        });
+                                        D.visible = false;
+                                        return args;
                                     });
-                                    D.visible = false;
-                                    return args;
-                                });
                                 break;
                             case 'Delete Imposter':
-                                API.deleteImposter({
-                                    avatarId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'Imposter deleted',
-                                        type: 'success'
+                                avatarRequest
+                                    .deleteImposter({
+                                        avatarId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message: 'Imposter deleted',
+                                            type: 'success'
+                                        });
+                                        this.showAvatarDialog(D.id);
+                                        return args;
                                     });
-                                    this.showAvatarDialog(D.id);
-                                    return args;
-                                });
                                 break;
                             case 'Create Imposter':
-                                API.createImposter({
-                                    avatarId: D.id
-                                }).then((args) => {
-                                    this.$message({
-                                        message: 'Imposter queued for creation',
-                                        type: 'success'
+                                avatarRequest
+                                    .createImposter({
+                                        avatarId: D.id
+                                    })
+                                    .then((args) => {
+                                        this.$message({
+                                            message:
+                                                'Imposter queued for creation',
+                                            type: 'success'
+                                        });
+                                        return args;
                                     });
-                                    return args;
-                                });
                                 break;
                             case 'Regenerate Imposter':
-                                API.deleteImposter({
-                                    avatarId: D.id
-                                })
+                                avatarRequest
+                                    .deleteImposter({
+                                        avatarId: D.id
+                                    })
                                     .then((args) => {
                                         return args;
                                     })
                                     .finally(() => {
-                                        API.createImposter({
-                                            avatarId: D.id
-                                        }).then((args) => {
-                                            this.$message({
-                                                message:
-                                                    'Imposter deleted and queued for creation',
-                                                type: 'success'
+                                        avatarRequest
+                                            .createImposter({
+                                                avatarId: D.id
+                                            })
+                                            .then((args) => {
+                                                this.$message({
+                                                    message:
+                                                        'Imposter deleted and queued for creation',
+                                                    type: 'success'
+                                                });
+                                                return args;
                                             });
-                                            return args;
-                                        });
                                     });
                                 break;
                         }
@@ -12549,77 +11359,58 @@ console.log(`isLinux: ${LINUX}`);
     $app.methods.addFavorite = function (group) {
         var D = this.favoriteDialog;
         D.loading = true;
-        API.addFavorite({
-            type: D.type,
-            favoriteId: D.objectId,
-            tags: group.name
-        })
+        favoriteRequest
+            .addFavorite({
+                type: D.type,
+                favoriteId: D.objectId,
+                tags: group.name
+            })
+            .then(() => {
+                D.visible = false;
+                new Noty({
+                    type: 'success',
+                    text: 'Favorite added'
+                }).show();
+            })
             .finally(() => {
                 D.loading = false;
-            })
-            .then((args) => {
-                return args;
             });
     };
 
     $app.methods.addFavoriteWorld = function (ref, group, message) {
-        return API.addFavorite({
-            type: 'world',
-            favoriteId: ref.id,
-            tags: group.name
-        }).then((args) => {
-            if (message) {
-                this.$message({
-                    message: 'World added to favorites',
-                    type: 'success'
-                });
-            }
-            return args;
-        });
-    };
-
-    $app.methods.addFavoriteAvatar = function (ref, group, message) {
-        return API.addFavorite({
-            type: 'avatar',
-            favoriteId: ref.id,
-            tags: group.name
-        }).then((args) => {
-            if (message) {
-                this.$message({
-                    message: 'Avatar added to favorites',
-                    type: 'success'
-                });
-            }
-            return args;
-        });
+        return favoriteRequest
+            .addFavorite({
+                type: 'world',
+                favoriteId: ref.id,
+                tags: group.name
+            })
+            .then((args) => {
+                if (message) {
+                    this.$message({
+                        message: 'World added to favorites',
+                        type: 'success'
+                    });
+                }
+                return args;
+            });
     };
 
     $app.methods.addFavoriteUser = function (ref, group, message) {
-        return API.addFavorite({
-            type: 'friend',
-            favoriteId: ref.id,
-            tags: group.name
-        }).then((args) => {
-            if (message) {
-                this.$message({
-                    message: 'Friend added to favorites',
-                    type: 'success'
-                });
-            }
-            return args;
-        });
-    };
-
-    $app.methods.moveFavorite = function (ref, group, type) {
-        API.deleteFavorite({
-            objectId: ref.id
-        }).then(() => {
-            API.addFavorite({
-                type,
+        return favoriteRequest
+            .addFavorite({
+                type: 'friend',
                 favoriteId: ref.id,
                 tags: group.name
+            })
+            .then((args) => {
+                if (message) {
+                    this.$message({
+                        message: 'Friend added to favorites',
+                        type: 'success'
+                    });
+                }
+                return args;
             });
-        });
     };
 
     $app.methods.showFavoriteDialog = function (type, objectId) {
@@ -12735,19 +11526,23 @@ console.log(`isLinux: ${LINUX}`);
                         if (receiverUserId === API.currentUser.id) {
                             // can't invite self!?
                             var L = $utils.parseLocation(D.worldId);
-                            API.selfInvite({
-                                instanceId: L.instanceId,
-                                worldId: L.worldId
-                            }).finally(inviteLoop);
+                            instanceRequest
+                                .selfInvite({
+                                    instanceId: L.instanceId,
+                                    worldId: L.worldId
+                                })
+                                .finally(inviteLoop);
                         } else {
-                            API.sendInvite(
-                                {
-                                    instanceId: D.worldId,
-                                    worldId: D.worldId,
-                                    worldName: D.worldName
-                                },
-                                receiverUserId
-                            ).finally(inviteLoop);
+                            notificationRequest
+                                .sendInvite(
+                                    {
+                                        instanceId: D.worldId,
+                                        worldId: D.worldId,
+                                        worldName: D.worldName
+                                    },
+                                    receiverUserId
+                                )
+                                .finally(inviteLoop);
                         }
                     } else {
                         D.loading = false;
@@ -12764,29 +11559,31 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.showInviteDialog = function (tag) {
-        if (!this.isRealInstance(tag)) {
+        if (!$utils.isRealInstance(tag)) {
             return;
         }
         this.$nextTick(() => $app.adjustDialogZ(this.$refs.inviteDialog.$el));
         var L = $utils.parseLocation(tag);
-        API.getCachedWorld({
-            worldId: L.worldId
-        }).then((args) => {
-            var D = this.inviteDialog;
-            D.userIds = [];
-            D.worldId = L.tag;
-            D.worldName = args.ref.name;
-            D.friendsInInstance = [];
-            var friendsInCurrentInstance = this.lastLocation.friendList;
-            for (var friend of friendsInCurrentInstance.values()) {
-                var ctx = this.friends.get(friend.userId);
-                if (typeof ctx.ref === 'undefined') {
-                    continue;
+        worldRequest
+            .getCachedWorld({
+                worldId: L.worldId
+            })
+            .then((args) => {
+                var D = this.inviteDialog;
+                D.userIds = [];
+                D.worldId = L.tag;
+                D.worldName = args.ref.name;
+                D.friendsInInstance = [];
+                var friendsInCurrentInstance = this.lastLocation.friendList;
+                for (var friend of friendsInCurrentInstance.values()) {
+                    var ctx = this.friends.get(friend.userId);
+                    if (typeof ctx.ref === 'undefined') {
+                        continue;
+                    }
+                    D.friendsInInstance.push(ctx);
                 }
-                D.friendsInInstance.push(ctx);
-            }
-            D.visible = true;
-        });
+                D.visible = true;
+            });
     };
 
     // #endregion
@@ -12945,6 +11742,14 @@ console.log(`isLinux: ${LINUX}`);
     // #endregion
     // #region | App: New Instance Dialog
 
+    $app.data.instanceContentSettings = [
+        'emoji',
+        'stickers',
+        'pedestals',
+        'prints',
+        'drones'
+    ];
+
     $app.data.newInstanceDialog = {
         visible: false,
         loading: false,
@@ -12981,7 +11786,14 @@ console.log(`isLinux: ${LINUX}`);
         lastSelectedGroupId: '',
         selectedGroupRoles: [],
         roleIds: [],
-        groupRef: {}
+        groupRef: {},
+        contentSettings: $app.data.instanceContentSettings,
+        selectedContentSettings: JSON.parse(
+            await configRepository.getString(
+                'instanceDialogSelectedContentSettings',
+                JSON.stringify($app.data.instanceContentSettings)
+            )
+        )
     };
 
     API.$on('LOGOUT', function () {
@@ -13131,12 +11943,18 @@ console.log(`isLinux: ${LINUX}`);
         } else if (D.region === 'Japan') {
             region = 'jp';
         }
+        var contentSettings = {};
+        for (var setting of D.contentSettings) {
+            contentSettings[setting] =
+                D.selectedContentSettings.includes(setting);
+        }
         var params = {
             type,
             canRequestInvite,
             worldId: D.worldId,
             ownerId: API.currentUser.id,
-            region
+            region,
+            contentSettings
         };
         if (type === 'group') {
             params.groupAccessType = D.groupAccessType;
@@ -13160,7 +11978,7 @@ console.log(`isLinux: ${LINUX}`);
             params.ageGate = true;
         }
         try {
-            var args = await API.createInstance(params);
+            var args = await instanceRequest.createInstance(params);
             D.location = args.json.location;
             D.instanceId = args.json.instanceId;
             D.secureOrShortName = args.json.shortName || args.json.secureName;
@@ -13176,21 +11994,23 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.selfInvite = function (location, shortName) {
-        if (!this.isRealInstance(location)) {
+        var L = $utils.parseLocation(location);
+        if (!L.isRealInstance) {
             return;
         }
-        var L = $utils.parseLocation(location);
-        API.selfInvite({
-            instanceId: L.instanceId,
-            worldId: L.worldId,
-            shortName
-        }).then((args) => {
-            this.$message({
-                message: 'Self invite sent',
-                type: 'success'
+        instanceRequest
+            .selfInvite({
+                instanceId: L.instanceId,
+                worldId: L.worldId,
+                shortName
+            })
+            .then((args) => {
+                this.$message({
+                    message: 'Self invite sent',
+                    type: 'success'
+                });
+                return args;
             });
-            return args;
-        });
     };
 
     $app.methods.updateNewInstanceDialog = function (noChanges) {
@@ -13246,10 +12066,14 @@ console.log(`isLinux: ${LINUX}`);
             'instanceDialogAgeGate',
             this.newInstanceDialog.ageGate
         );
+        await configRepository.setString(
+            'instanceDialogSelectedContentSettings',
+            JSON.stringify(this.newInstanceDialog.selectedContentSettings)
+        );
     };
 
     $app.methods.showNewInstanceDialog = async function (tag) {
-        if (!this.isRealInstance(tag)) {
+        if (!$utils.isRealInstance(tag)) {
             return;
         }
         this.$nextTick(() =>
@@ -13384,12 +12208,16 @@ console.log(`isLinux: ${LINUX}`);
         debugAllowed: false,
         avatarScalingDisabled: false,
         focusViewDisabled: false,
-        stickersDisabled: false,
         contentHorror: false,
         contentGore: false,
         contentViolence: false,
         contentAdult: false,
-        contentSex: false
+        contentSex: false,
+        emoji: true,
+        stickers: true,
+        pedestals: true,
+        prints: true,
+        drones: true
     };
 
     $app.methods.showSetWorldTagsDialog = function () {
@@ -13401,7 +12229,6 @@ console.log(`isLinux: ${LINUX}`);
         D.debugAllowed = false;
         D.avatarScalingDisabled = false;
         D.focusViewDisabled = false;
-        D.stickersDisabled = false;
         D.contentHorror = false;
         D.contentGore = false;
         D.contentViolence = false;
@@ -13443,8 +12270,20 @@ console.log(`isLinux: ${LINUX}`);
                 case 'feature_focus_view_disabled':
                     D.focusViewDisabled = true;
                     break;
+                case 'feature_emoji_disabled':
+                    D.emoji = false;
+                    break;
                 case 'feature_stickers_disabled':
-                    D.stickersDisabled = true;
+                    D.stickers = false;
+                    break;
+                case 'feature_pedestals_disabled':
+                    D.pedestals = false;
+                    break;
+                case 'feature_prints_disabled':
+                    D.prints = false;
+                    break;
+                case 'feature_drones_disabled':
+                    D.drones = false;
                     break;
             }
         });
@@ -13501,26 +12340,40 @@ console.log(`isLinux: ${LINUX}`);
         if (D.focusViewDisabled) {
             tags.unshift('feature_focus_view_disabled');
         }
-        if (D.stickersDisabled) {
+        if (!D.emoji) {
+            tags.unshift('feature_emoji_disabled');
+        }
+        if (!D.stickers) {
             tags.unshift('feature_stickers_disabled');
         }
-        API.saveWorld({
-            id: this.worldDialog.id,
-            tags
-        }).then((args) => {
-            this.$message({
-                message: 'Tags updated',
-                type: 'success'
+        if (!D.pedestals) {
+            tags.unshift('feature_pedestals_disabled');
+        }
+        if (!D.prints) {
+            tags.unshift('feature_prints_disabled');
+        }
+        if (!D.drones) {
+            tags.unshift('feature_drones_disabled');
+        }
+        worldRequest
+            .saveWorld({
+                id: this.worldDialog.id,
+                tags
+            })
+            .then((args) => {
+                this.$message({
+                    message: 'Tags updated',
+                    type: 'success'
+                });
+                D.visible = false;
+                if (
+                    this.worldDialog.visible &&
+                    this.worldDialog.id === args.json.id
+                ) {
+                    this.showWorldDialog(args.json.id);
+                }
+                return args;
             });
-            D.visible = false;
-            if (
-                this.worldDialog.visible &&
-                this.worldDialog.id === args.json.id
-            ) {
-                this.showWorldDialog(args.json.id);
-            }
-            return args;
-        });
     };
 
     // #endregion
@@ -13716,7 +12569,7 @@ console.log(`isLinux: ${LINUX}`);
                         tags.push(tag);
                     }
                 }
-                await API.saveAvatar({
+                await avatarRequest.saveAvatar({
                     id: ref.id,
                     tags
                 });
@@ -13872,7 +12725,7 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.showLaunchDialog = function (tag, shortName) {
-        if (!this.isRealInstance(tag)) {
+        if (!$utils.isRealInstance(tag)) {
             return;
         }
         this.$nextTick(() => $app.adjustDialogZ(this.$refs.launchDialog.$el));
@@ -13894,7 +12747,7 @@ console.log(`isLinux: ${LINUX}`);
         D.url = this.getLaunchURL(L);
         D.visible = true;
         if (!shortName) {
-            API.getInstanceShortName({
+            instanceRequest.getInstanceShortName({
                 worldId: L.worldId,
                 instanceId: L.instanceId
             });
@@ -13939,7 +12792,7 @@ console.log(`isLinux: ${LINUX}`);
         } else {
             // fetch shortName
             var newShortName = '';
-            var response = await API.getInstanceShortName({
+            var response = await instanceRequest.getInstanceShortName({
                 worldId: L.worldId,
                 instanceId: L.instanceId
             });
@@ -14032,7 +12885,7 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.copyInstanceUrl = async function (location) {
         var L = $utils.parseLocation(location);
-        var args = await API.getInstanceShortName({
+        var args = await instanceRequest.getInstanceShortName({
             worldId: L.worldId,
             instanceId: L.instanceId
         });
@@ -14057,30 +12910,6 @@ console.log(`isLinux: ${LINUX}`);
             type: 'success'
         });
         this.copyToClipboard(`https://vrchat.com/home/avatar/${avatarId}`);
-    };
-
-    $app.methods.copyWorldId = function (worldId) {
-        this.$message({
-            message: 'World ID copied to clipboard',
-            type: 'success'
-        });
-        this.copyToClipboard(worldId);
-    };
-
-    $app.methods.copyWorldUrl = function (worldId) {
-        this.$message({
-            message: 'World URL copied to clipboard',
-            type: 'success'
-        });
-        this.copyToClipboard(`https://vrchat.com/home/world/${worldId}`);
-    };
-
-    $app.methods.copyWorldName = function (worldName) {
-        this.$message({
-            message: 'World name copied to clipboard',
-            type: 'success'
-        });
-        this.copyToClipboard(worldName);
     };
 
     $app.methods.copyUserId = function (userId) {
@@ -14160,21 +12989,7 @@ console.log(`isLinux: ${LINUX}`);
             n: 100,
             tag: 'icon'
         };
-        API.getFileList(params);
-    };
-
-    API.getFileList = function (params) {
-        return this.call('files', {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FILES:LIST', args);
-            return args;
-        });
+        vrcPlusIconRequest.getFileList(params);
     };
 
     API.$on('FILES:LIST', function (args) {
@@ -14211,7 +13026,7 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.deleteVRCPlusIcon = function (fileId) {
-        API.deleteFile(fileId).then((args) => {
+        vrcPlusIconRequest.deleteFile(fileId).then((args) => {
             API.$emit('VRCPLUSICON:DELETE', args);
             return args;
         });
@@ -14227,30 +13042,6 @@ console.log(`isLinux: ${LINUX}`);
             }
         }
     });
-
-    API.deleteFile = function (fileId) {
-        return this.call(`file/${fileId}`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                fileId
-            };
-            return args;
-        });
-    };
-
-    API.deleteFileVersion = function (params) {
-        return this.call(`file/${params.fileId}/${params.version}`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            return args;
-        });
-    };
 
     $app.methods.compareCurrentVRCPlusIcon = function (userIcon) {
         var currentUserIcon = $utils.extractFileId(API.currentUser.userIcon);
@@ -14290,7 +13081,7 @@ console.log(`isLinux: ${LINUX}`);
         var r = new FileReader();
         r.onload = function () {
             var base64Body = btoa(r.result);
-            API.uploadVRCPlusIcon(base64Body).then((args) => {
+            vrcPlusIconRequest.uploadVRCPlusIcon(base64Body).then((args) => {
                 $app.$message({
                     message: $t('message.icon.uploaded'),
                     type: 'success'
@@ -14304,25 +13095,6 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.displayVRCPlusIconUpload = function () {
         document.getElementById('VRCPlusIconUploadButton').click();
-    };
-
-    API.uploadVRCPlusIcon = function (imageData) {
-        var params = {
-            tag: 'icon'
-        };
-        return this.call('file/image', {
-            uploadImage: true,
-            matchingDimensions: true,
-            postData: JSON.stringify(params),
-            imageData
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('VRCPLUSICON:ADD', args);
-            return args;
-        });
     };
 
     API.$on('VRCPLUSICON:ADD', function (args) {
@@ -14405,21 +13177,12 @@ console.log(`isLinux: ${LINUX}`);
         $app.inviteRequestResponseMessageTable.visible = false;
     });
 
-    $app.methods.refreshInviteMessageTable = function (messageType) {
-        API.refreshInviteMessageTableData(messageType);
-    };
+    // temp, invites.pug
+    API.refreshInviteMessageTableData =
+        inviteMessagesRequest.refreshInviteMessageTableData;
 
-    API.refreshInviteMessageTableData = function (messageType) {
-        return this.call(`message/${this.currentUser.id}/${messageType}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                messageType
-            };
-            this.$emit(`INVITE:${messageType.toUpperCase()}`, args);
-            return args;
-        });
+    $app.methods.refreshInviteMessageTable = function (messageType) {
+        inviteMessagesRequest.refreshInviteMessageTableData(messageType);
     };
 
     API.$on('INVITE:MESSAGE', function (args) {
@@ -14437,24 +13200,6 @@ console.log(`isLinux: ${LINUX}`);
     API.$on('INVITE:REQUESTRESPONSE', function (args) {
         $app.inviteRequestResponseMessageTable.data = args.json;
     });
-
-    API.editInviteMessage = function (params, messageType, slot) {
-        return this.call(
-            `message/${this.currentUser.id}/${messageType}/${slot}`,
-            {
-                method: 'PUT',
-                params
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params,
-                messageType,
-                slot
-            };
-            return args;
-        });
-    };
 
     // #endregion
     // #region | App: Edit Invite Message Dialog
@@ -14489,7 +13234,8 @@ console.log(`isLinux: ${LINUX}`);
             var params = {
                 message: D.newMessage
             };
-            API.editInviteMessage(params, messageType, slot)
+            inviteMessagesRequest
+                .editInviteMessage(params, messageType, slot)
                 .catch((err) => {
                     throw err;
                 })
@@ -14550,7 +13296,8 @@ console.log(`isLinux: ${LINUX}`);
             var params = {
                 message: D.newMessage
             };
-            await API.editInviteMessage(params, messageType, slot)
+            await inviteMessagesRequest
+                .editInviteMessage(params, messageType, slot)
                 .catch((err) => {
                     throw err;
                 })
@@ -14577,12 +13324,13 @@ console.log(`isLinux: ${LINUX}`);
             rsvp: true
         };
         if ($app.uploadImage) {
-            API.sendInviteResponsePhoto(params, I.invite.id)
+            notificationRequest
+                .sendInviteResponsePhoto(params, I.invite.id)
                 .catch((err) => {
                     throw err;
                 })
                 .then((args) => {
-                    API.hideNotification({
+                    notificationRequest.hideNotification({
                         notificationId: I.invite.id
                     });
                     this.$message({
@@ -14594,12 +13342,13 @@ console.log(`isLinux: ${LINUX}`);
                     return args;
                 });
         } else {
-            API.sendInviteResponse(params, I.invite.id)
+            notificationRequest
+                .sendInviteResponse(params, I.invite.id)
                 .catch((err) => {
                     throw err;
                 })
                 .then((args) => {
-                    API.hideNotification({
+                    notificationRequest.hideNotification({
                         notificationId: I.invite.id
                     });
                     this.$message({
@@ -14638,7 +13387,7 @@ console.log(`isLinux: ${LINUX}`);
         this.sendInviteResponseDialog = {
             invite
         };
-        API.refreshInviteMessageTableData('response');
+        inviteMessagesRequest.refreshInviteMessageTableData('response');
         this.$nextTick(() =>
             $app.adjustDialogZ(this.$refs.sendInviteResponseDialog.$el)
         );
@@ -14675,12 +13424,13 @@ console.log(`isLinux: ${LINUX}`);
             rsvp: true
         };
         if ($app.uploadImage) {
-            API.sendInviteResponsePhoto(params, D.invite.id, D.messageType)
+            notificationRequest
+                .sendInviteResponsePhoto(params, D.invite.id, D.messageType)
                 .catch((err) => {
                     throw err;
                 })
                 .then((args) => {
-                    API.hideNotification({
+                    notificationRequest.hideNotification({
                         notificationId: D.invite.id
                     });
                     this.$message({
@@ -14690,12 +13440,13 @@ console.log(`isLinux: ${LINUX}`);
                     return args;
                 });
         } else {
-            API.sendInviteResponse(params, D.invite.id, D.messageType)
+            notificationRequest
+                .sendInviteResponse(params, D.invite.id, D.messageType)
                 .catch((err) => {
                     throw err;
                 })
                 .then((args) => {
-                    API.hideNotification({
+                    notificationRequest.hideNotification({
                         notificationId: D.invite.id
                     });
                     this.$message({
@@ -14728,7 +13479,7 @@ console.log(`isLinux: ${LINUX}`);
         this.sendInviteResponseDialog = {
             invite
         };
-        API.refreshInviteMessageTableData('requestResponse');
+        inviteMessagesRequest.refreshInviteMessageTableData('requestResponse');
         this.$nextTick(() =>
             $app.adjustDialogZ(this.$refs.sendInviteRequestResponseDialog.$el)
         );
@@ -14770,7 +13521,8 @@ console.log(`isLinux: ${LINUX}`);
             var params = {
                 message: D.newMessage
             };
-            await API.editInviteMessage(params, messageType, slot)
+            await inviteMessagesRequest
+                .editInviteMessage(params, messageType, slot)
                 .catch((err) => {
                     throw err;
                 })
@@ -14800,30 +13552,36 @@ console.log(`isLinux: ${LINUX}`);
                     if (receiverUserId === API.currentUser.id) {
                         // can't invite self!?
                         var L = $utils.parseLocation(J.worldId);
-                        API.selfInvite({
-                            instanceId: L.instanceId,
-                            worldId: L.worldId
-                        }).finally(inviteLoop);
+                        instanceRequest
+                            .selfInvite({
+                                instanceId: L.instanceId,
+                                worldId: L.worldId
+                            })
+                            .finally(inviteLoop);
                     } else if ($app.uploadImage) {
-                        API.sendInvitePhoto(
-                            {
-                                instanceId: J.worldId,
-                                worldId: J.worldId,
-                                worldName: J.worldName,
-                                messageSlot: slot
-                            },
-                            receiverUserId
-                        ).finally(inviteLoop);
+                        notificationRequest
+                            .sendInvitePhoto(
+                                {
+                                    instanceId: J.worldId,
+                                    worldId: J.worldId,
+                                    worldName: J.worldName,
+                                    messageSlot: slot
+                                },
+                                receiverUserId
+                            )
+                            .finally(inviteLoop);
                     } else {
-                        API.sendInvite(
-                            {
-                                instanceId: J.worldId,
-                                worldId: J.worldId,
-                                worldName: J.worldName,
-                                messageSlot: slot
-                            },
-                            receiverUserId
-                        ).finally(inviteLoop);
+                        notificationRequest
+                            .sendInvite(
+                                {
+                                    instanceId: J.worldId,
+                                    worldId: J.worldId,
+                                    worldName: J.worldName,
+                                    messageSlot: slot
+                                },
+                                receiverUserId
+                            )
+                            .finally(inviteLoop);
                     }
                 } else {
                     J.loading = false;
@@ -14838,7 +13596,8 @@ console.log(`isLinux: ${LINUX}`);
         } else if (I.messageType === 'invite') {
             I.params.messageSlot = slot;
             if ($app.uploadImage) {
-                API.sendInvitePhoto(I.params, I.userId)
+                notificationRequest
+                    .sendInvitePhoto(I.params, I.userId)
                     .catch((err) => {
                         throw err;
                     })
@@ -14850,7 +13609,8 @@ console.log(`isLinux: ${LINUX}`);
                         return args;
                     });
             } else {
-                API.sendInvite(I.params, I.userId)
+                notificationRequest
+                    .sendInvite(I.params, I.userId)
                     .catch((err) => {
                         throw err;
                     })
@@ -14865,7 +13625,8 @@ console.log(`isLinux: ${LINUX}`);
         } else if (I.messageType === 'requestInvite') {
             I.params.requestSlot = slot;
             if ($app.uploadImage) {
-                API.sendRequestInvitePhoto(I.params, I.userId)
+                notificationRequest
+                    .sendRequestInvitePhoto(I.params, I.userId)
                     .catch((err) => {
                         this.clearInviteImageUpload();
                         throw err;
@@ -14878,7 +13639,8 @@ console.log(`isLinux: ${LINUX}`);
                         return args;
                     });
             } else {
-                API.sendRequestInvite(I.params, I.userId)
+                notificationRequest
+                    .sendRequestInvite(I.params, I.userId)
                     .catch((err) => {
                         throw err;
                     })
@@ -14924,7 +13686,7 @@ console.log(`isLinux: ${LINUX}`);
             userId,
             messageType: 'invite'
         };
-        API.refreshInviteMessageTableData('message');
+        inviteMessagesRequest.refreshInviteMessageTableData('message');
         this.$nextTick(() =>
             $app.adjustDialogZ(this.$refs.sendInviteDialog.$el)
         );
@@ -14961,30 +13723,36 @@ console.log(`isLinux: ${LINUX}`);
                     if (receiverUserId === API.currentUser.id) {
                         // can't invite self!?
                         var L = $utils.parseLocation(J.worldId);
-                        API.selfInvite({
-                            instanceId: L.instanceId,
-                            worldId: L.worldId
-                        }).finally(inviteLoop);
+                        instanceRequest
+                            .selfInvite({
+                                instanceId: L.instanceId,
+                                worldId: L.worldId
+                            })
+                            .finally(inviteLoop);
                     } else if ($app.uploadImage) {
-                        API.sendInvitePhoto(
-                            {
-                                instanceId: J.worldId,
-                                worldId: J.worldId,
-                                worldName: J.worldName,
-                                messageSlot: D.messageSlot
-                            },
-                            receiverUserId
-                        ).finally(inviteLoop);
+                        notificationRequest
+                            .sendInvitePhoto(
+                                {
+                                    instanceId: J.worldId,
+                                    worldId: J.worldId,
+                                    worldName: J.worldName,
+                                    messageSlot: D.messageSlot
+                                },
+                                receiverUserId
+                            )
+                            .finally(inviteLoop);
                     } else {
-                        API.sendInvite(
-                            {
-                                instanceId: J.worldId,
-                                worldId: J.worldId,
-                                worldName: J.worldName,
-                                messageSlot: D.messageSlot
-                            },
-                            receiverUserId
-                        ).finally(inviteLoop);
+                        notificationRequest
+                            .sendInvite(
+                                {
+                                    instanceId: J.worldId,
+                                    worldId: J.worldId,
+                                    worldName: J.worldName,
+                                    messageSlot: D.messageSlot
+                                },
+                                receiverUserId
+                            )
+                            .finally(inviteLoop);
                     }
                 } else {
                     J.loading = false;
@@ -14999,7 +13767,8 @@ console.log(`isLinux: ${LINUX}`);
         } else if (D.messageType === 'invite') {
             D.params.messageSlot = D.messageSlot;
             if ($app.uploadImage) {
-                API.sendInvitePhoto(D.params, D.userId)
+                notificationRequest
+                    .sendInvitePhoto(D.params, D.userId)
                     .catch((err) => {
                         throw err;
                     })
@@ -15011,7 +13780,8 @@ console.log(`isLinux: ${LINUX}`);
                         return args;
                     });
             } else {
-                API.sendInvite(D.params, D.userId)
+                notificationRequest
+                    .sendInvite(D.params, D.userId)
                     .catch((err) => {
                         throw err;
                     })
@@ -15026,7 +13796,8 @@ console.log(`isLinux: ${LINUX}`);
         } else if (D.messageType === 'requestInvite') {
             D.params.requestSlot = D.messageSlot;
             if ($app.uploadImage) {
-                API.sendRequestInvitePhoto(D.params, D.userId)
+                notificationRequest
+                    .sendRequestInvitePhoto(D.params, D.userId)
                     .catch((err) => {
                         this.clearInviteImageUpload();
                         throw err;
@@ -15039,7 +13810,8 @@ console.log(`isLinux: ${LINUX}`);
                         return args;
                     });
             } else {
-                API.sendRequestInvite(D.params, D.userId)
+                notificationRequest
+                    .sendRequestInvite(D.params, D.userId)
                     .catch((err) => {
                         throw err;
                     })
@@ -15077,7 +13849,7 @@ console.log(`isLinux: ${LINUX}`);
             userId,
             messageType: 'requestInvite'
         };
-        API.refreshInviteMessageTableData('request');
+        inviteMessagesRequest.refreshInviteMessageTableData('request');
         this.$nextTick(() =>
             $app.adjustDialogZ(this.$refs.sendInviteRequestDialog.$el)
         );
@@ -15088,80 +13860,8 @@ console.log(`isLinux: ${LINUX}`);
     // #endregion
     // #region | App: Friends List
 
-    API.$on('LOGIN', function () {
-        $app.friendsListTable.data = [];
-    });
-
-    $app.methods.selectFriendsListRow = function (val) {
-        if (val === null) {
-            return;
-        }
-        if (!val.id) {
-            this.lookupUser(val);
-            return;
-        }
-        this.showUserDialog(val.id);
-    };
-
     $app.data.friendsListSearch = '';
-    $app.data.friendsListSearchFilterVIP = false;
-    $app.data.friendsListSearchFilters = [];
-    $app.data.friendsListSelectAllCheckbox = false;
-    $app.data.friendsListBulkUnfriendMode = false;
-    $app.data.friendsListBulkUnfriendForceUpdate = 0;
-
-    $app.methods.toggleFriendsListBulkUnfriendMode = function () {
-        if (!this.friendsListBulkUnfriendMode) {
-            this.friendsListTable.data.forEach((ref) => {
-                ref.$selected = false;
-            });
-        }
-    };
-
-    $app.methods.showBulkUnfriendSelectionConfirm = function () {
-        var pendingUnfriendList = this.friendsListTable.data.reduce(
-            (acc, ctx) => {
-                if (ctx.$selected) {
-                    acc.push(ctx.displayName);
-                }
-                return acc;
-            },
-            []
-        );
-        var elementsTicked = pendingUnfriendList.length;
-        if (elementsTicked === 0) {
-            return;
-        }
-        this.$confirm(
-            `Are you sure you want to delete ${elementsTicked} friends?
-            This can negatively affect your trust rank,
-            This action cannot be undone.`,
-            `Delete ${elementsTicked} friends?`,
-            {
-                confirmButtonText: 'Confirm',
-                cancelButtonText: 'Cancel',
-                type: 'info',
-                showInput: true,
-                inputType: 'textarea',
-                inputValue: pendingUnfriendList.join('\r\n'),
-                callback: (action) => {
-                    if (action === 'confirm') {
-                        this.bulkUnfriendSelection();
-                    }
-                }
-            }
-        );
-    };
-
-    $app.methods.bulkUnfriendSelection = function () {
-        for (var ctx of this.friendsListTable.data) {
-            if (ctx.$selected) {
-                API.deleteFriend({
-                    userId: ctx.id
-                });
-            }
-        }
-    };
+    // $app.data.friendsListSelectAllCheckbox = false;
 
     // $app.methods.showBulkUnfriendAllConfirm = function () {
     //     this.$confirm(
@@ -15189,87 +13889,6 @@ console.log(`isLinux: ${LINUX}`);
     //         });
     //     }
     // };
-
-    $app.methods.friendsListSearchChange = function () {
-        this.friendsListTable.data = [];
-        var filters = [...this.friendsListSearchFilters];
-        if (filters.length === 0) {
-            filters = ['Display Name', 'Rank', 'Status', 'Bio', 'Memo'];
-        }
-        var results = [];
-        if (this.friendsListSearch) {
-            var query = this.friendsListSearch;
-            var cleanedQuery = removeWhitespace(query);
-        }
-
-        for (var ctx of this.friends.values()) {
-            if (typeof ctx.ref === 'undefined') {
-                continue;
-            }
-            if (typeof ctx.ref.$selected === 'undefined') {
-                ctx.ref.$selected = false;
-            }
-            if (this.friendsListSearchFilterVIP && !ctx.isVIP) {
-                continue;
-            }
-            if (query && filters) {
-                var match = false;
-                if (
-                    !match &&
-                    filters.includes('Display Name') &&
-                    ctx.ref.displayName
-                ) {
-                    match =
-                        localeIncludes(
-                            ctx.ref.displayName,
-                            cleanedQuery,
-                            this.stringComparer
-                        ) ||
-                        localeIncludes(
-                            removeConfusables(ctx.ref.displayName),
-                            cleanedQuery,
-                            this.stringComparer
-                        );
-                }
-                if (!match && filters.includes('Memo') && ctx.memo) {
-                    match = localeIncludes(
-                        ctx.memo,
-                        query,
-                        this.stringComparer
-                    );
-                }
-                if (!match && filters.includes('Bio') && ctx.ref.bio) {
-                    match = localeIncludes(
-                        ctx.ref.bio,
-                        query,
-                        this.stringComparer
-                    );
-                }
-                if (
-                    !match &&
-                    filters.includes('Status') &&
-                    ctx.ref.statusDescription
-                ) {
-                    match = localeIncludes(
-                        ctx.ref.statusDescription,
-                        query,
-                        this.stringComparer
-                    );
-                }
-                if (!match && filters.includes('Rank')) {
-                    match = String(ctx.ref.$trustLevel)
-                        .toUpperCase()
-                        .includes(query.toUpperCase());
-                }
-                if (!match) {
-                    continue;
-                }
-            }
-            results.push(ctx.ref);
-        }
-        this.getAllUserStats();
-        this.friendsListTable.data = results;
-    };
 
     $app.methods.getAllUserStats = async function () {
         var userIds = [];
@@ -15338,56 +13957,6 @@ console.log(`isLinux: ${LINUX}`);
         ctx.$lastSeen = ref.lastSeen;
         ctx.$timeSpent = ref.timeSpent;
         /* eslint-enable require-atomic-updates */
-    };
-
-    $app.watch.friendsListSearch = $app.methods.friendsListSearchChange;
-    $app.data.friendsListLoading = false;
-    $app.data.friendsListLoadingProgress = '';
-
-    $app.methods.friendsListLoadUsers = async function () {
-        this.friendsListLoading = true;
-        var i = 0;
-        var toFetch = [];
-        for (var ctx of this.friends.values()) {
-            if (ctx.ref && !ctx.ref.date_joined) {
-                toFetch.push(ctx.id);
-            }
-        }
-        var length = toFetch.length;
-        for (var userId of toFetch) {
-            if (!this.friendsListLoading) {
-                this.friendsListLoadingProgress = '';
-                return;
-            }
-            i++;
-            this.friendsListLoadingProgress = `${i}/${length}`;
-            await API.getUser({
-                userId
-            });
-        }
-        this.friendsListLoadingProgress = '';
-        this.friendsListLoading = false;
-    };
-
-    $app.methods.sortAlphabetically = function (a, b, field) {
-        if (!a[field] || !b[field]) {
-            return 0;
-        }
-        return a[field].toLowerCase().localeCompare(b[field].toLowerCase());
-    };
-
-    $app.methods.sortLanguages = function (a, b) {
-        var sortedA = [];
-        var sortedB = [];
-        a.$languages.forEach((item) => {
-            sortedA.push(item.value);
-        });
-        b.$languages.forEach((item) => {
-            sortedB.push(item.value);
-        });
-        sortedA.sort();
-        sortedB.sort();
-        return JSON.stringify(sortedA).localeCompare(JSON.stringify(sortedB));
     };
 
     $app.methods.genMd5 = async function (file) {
@@ -15483,47 +14052,10 @@ console.log(`isLinux: ${LINUX}`);
                 signatureMd5,
                 signatureSizeInBytes
             };
-            API.uploadAvatarImage(params, fileId);
+            imageRequest.uploadAvatarImage(params, fileId);
         };
         r.readAsBinaryString(files[0]);
         clearFile();
-    };
-
-    API.uploadAvatarImage = async function (params, fileId) {
-        try {
-            return await this.call(`file/${fileId}`, {
-                method: 'POST',
-                params
-            }).then((json) => {
-                var args = {
-                    json,
-                    params,
-                    fileId
-                };
-                this.$emit('AVATARIMAGE:INIT', args);
-                return args;
-            });
-        } catch (err) {
-            console.error(err);
-            this.uploadAvatarFailCleanup(fileId);
-        }
-        return void 0;
-    };
-
-    API.uploadAvatarFailCleanup = async function (fileId) {
-        var json = await this.call(`file/${fileId}`, {
-            method: 'GET'
-        });
-        var fileId = json.id;
-        var fileVersion = json.versions[json.versions.length - 1].version;
-        this.call(`file/${fileId}/${fileVersion}/signature/finish`, {
-            method: 'PUT'
-        });
-        this.call(`file/${fileId}/${fileVersion}/file/finish`, {
-            method: 'PUT'
-        });
-        $app.avatarDialog.loading = false;
-        $app.changeAvatarImageDialogLoading = false;
     };
 
     API.$on('AVATARIMAGE:INIT', function (args) {
@@ -15534,30 +14066,8 @@ console.log(`isLinux: ${LINUX}`);
             fileId,
             fileVersion
         };
-        this.uploadAvatarImageFileStart(params);
+        imageRequest.uploadAvatarImageFileStart(params);
     });
-
-    API.uploadAvatarImageFileStart = async function (params) {
-        try {
-            return await this.call(
-                `file/${params.fileId}/${params.fileVersion}/file/start`,
-                {
-                    method: 'PUT'
-                }
-            ).then((json) => {
-                var args = {
-                    json,
-                    params
-                };
-                this.$emit('AVATARIMAGE:FILESTART', args);
-                return args;
-            });
-        } catch (err) {
-            console.error(err);
-            this.uploadAvatarFailCleanup(params.fileId);
-        }
-        return void 0;
-    };
 
     API.$on('AVATARIMAGE:FILESTART', function (args) {
         var { url } = args.json;
@@ -15602,28 +14112,8 @@ console.log(`isLinux: ${LINUX}`);
             fileId,
             fileVersion
         };
-        this.uploadAvatarImageFileFinish(params);
+        imageRequest.uploadAvatarImageFileFinish(params);
     });
-
-    API.uploadAvatarImageFileFinish = function (params) {
-        return this.call(
-            `file/${params.fileId}/${params.fileVersion}/file/finish`,
-            {
-                method: 'PUT',
-                params: {
-                    maxParts: 0,
-                    nextPartNumber: 0
-                }
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATARIMAGE:FILEFINISH', args);
-            return args;
-        });
-    };
 
     API.$on('AVATARIMAGE:FILEFINISH', function (args) {
         var { fileId, fileVersion } = args.params;
@@ -15631,30 +14121,8 @@ console.log(`isLinux: ${LINUX}`);
             fileId,
             fileVersion
         };
-        this.uploadAvatarImageSigStart(params);
+        imageRequest.uploadAvatarImageSigStart(params);
     });
-
-    API.uploadAvatarImageSigStart = async function (params) {
-        try {
-            return await this.call(
-                `file/${params.fileId}/${params.fileVersion}/signature/start`,
-                {
-                    method: 'PUT'
-                }
-            ).then((json) => {
-                var args = {
-                    json,
-                    params
-                };
-                this.$emit('AVATARIMAGE:SIGSTART', args);
-                return args;
-            });
-        } catch (err) {
-            console.error(err);
-            this.uploadAvatarFailCleanup(params.fileId);
-        }
-        return void 0;
-    };
 
     API.$on('AVATARIMAGE:SIGSTART', function (args) {
         var { url } = args.json;
@@ -15699,28 +14167,8 @@ console.log(`isLinux: ${LINUX}`);
             fileId,
             fileVersion
         };
-        this.uploadAvatarImageSigFinish(params);
+        imageRequest.uploadAvatarImageSigFinish(params);
     });
-
-    API.uploadAvatarImageSigFinish = function (params) {
-        return this.call(
-            `file/${params.fileId}/${params.fileVersion}/signature/finish`,
-            {
-                method: 'PUT',
-                params: {
-                    maxParts: 0,
-                    nextPartNumber: 0
-                }
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATARIMAGE:SIGFINISH', args);
-            return args;
-        });
-    };
 
     API.$on('AVATARIMAGE:SIGFINISH', function (args) {
         var { fileId, fileVersion } = args.params;
@@ -15728,23 +14176,8 @@ console.log(`isLinux: ${LINUX}`);
             id: $app.avatarImage.avatarId,
             imageUrl: `${API.endpointDomain}/file/${fileId}/${fileVersion}/file`
         };
-        this.setAvatarImage(parmas);
+        imageRequest.setAvatarImage(parmas);
     });
-
-    API.setAvatarImage = function (params) {
-        return this.call(`avatars/${params.id}`, {
-            method: 'PUT',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATARIMAGE:SET', args);
-            this.$emit('AVATAR', args);
-            return args;
-        });
-    };
 
     // Upload world image
 
@@ -15819,47 +14252,10 @@ console.log(`isLinux: ${LINUX}`);
                 signatureMd5,
                 signatureSizeInBytes
             };
-            API.uploadWorldImage(params, fileId);
+            imageRequest.uploadWorldImage(params, fileId);
         };
         r.readAsBinaryString(files[0]);
         clearFile();
-    };
-
-    API.uploadWorldImage = async function (params, fileId) {
-        try {
-            return await this.call(`file/${fileId}`, {
-                method: 'POST',
-                params
-            }).then((json) => {
-                var args = {
-                    json,
-                    params,
-                    fileId
-                };
-                this.$emit('WORLDIMAGE:INIT', args);
-                return args;
-            });
-        } catch (err) {
-            console.error(err);
-            this.uploadWorldFailCleanup(fileId);
-        }
-        return void 0;
-    };
-
-    API.uploadWorldFailCleanup = async function (fileId) {
-        var json = await this.call(`file/${fileId}`, {
-            method: 'GET'
-        });
-        var fileId = json.id;
-        var fileVersion = json.versions[json.versions.length - 1].version;
-        this.call(`file/${fileId}/${fileVersion}/signature/finish`, {
-            method: 'PUT'
-        });
-        this.call(`file/${fileId}/${fileVersion}/file/finish`, {
-            method: 'PUT'
-        });
-        $app.worldDialog.loading = false;
-        $app.changeWorldImageDialogLoading = false;
     };
 
     API.$on('WORLDIMAGE:INIT', function (args) {
@@ -15870,30 +14266,8 @@ console.log(`isLinux: ${LINUX}`);
             fileId,
             fileVersion
         };
-        this.uploadWorldImageFileStart(params);
+        imageRequest.uploadWorldImageFileStart(params);
     });
-
-    API.uploadWorldImageFileStart = async function (params) {
-        try {
-            return await this.call(
-                `file/${params.fileId}/${params.fileVersion}/file/start`,
-                {
-                    method: 'PUT'
-                }
-            ).then((json) => {
-                var args = {
-                    json,
-                    params
-                };
-                this.$emit('WORLDIMAGE:FILESTART', args);
-                return args;
-            });
-        } catch (err) {
-            console.error(err);
-            this.uploadWorldFailCleanup(params.fileId);
-        }
-        return void 0;
-    };
 
     API.$on('WORLDIMAGE:FILESTART', function (args) {
         var { url } = args.json;
@@ -15938,28 +14312,8 @@ console.log(`isLinux: ${LINUX}`);
             fileId,
             fileVersion
         };
-        this.uploadWorldImageFileFinish(params);
+        imageRequest.uploadWorldImageFileFinish(params);
     });
-
-    API.uploadWorldImageFileFinish = function (params) {
-        return this.call(
-            `file/${params.fileId}/${params.fileVersion}/file/finish`,
-            {
-                method: 'PUT',
-                params: {
-                    maxParts: 0,
-                    nextPartNumber: 0
-                }
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLDIMAGE:FILEFINISH', args);
-            return args;
-        });
-    };
 
     API.$on('WORLDIMAGE:FILEFINISH', function (args) {
         var { fileId, fileVersion } = args.params;
@@ -15967,30 +14321,8 @@ console.log(`isLinux: ${LINUX}`);
             fileId,
             fileVersion
         };
-        this.uploadWorldImageSigStart(params);
+        imageRequest.uploadWorldImageSigStart(params);
     });
-
-    API.uploadWorldImageSigStart = async function (params) {
-        try {
-            return await this.call(
-                `file/${params.fileId}/${params.fileVersion}/signature/start`,
-                {
-                    method: 'PUT'
-                }
-            ).then((json) => {
-                var args = {
-                    json,
-                    params
-                };
-                this.$emit('WORLDIMAGE:SIGSTART', args);
-                return args;
-            });
-        } catch (err) {
-            console.error(err);
-            this.uploadWorldFailCleanup(params.fileId);
-        }
-        return void 0;
-    };
 
     API.$on('WORLDIMAGE:SIGSTART', function (args) {
         var { url } = args.json;
@@ -16035,28 +14367,8 @@ console.log(`isLinux: ${LINUX}`);
             fileId,
             fileVersion
         };
-        this.uploadWorldImageSigFinish(params);
+        imageRequest.uploadWorldImageSigFinish(params);
     });
-
-    API.uploadWorldImageSigFinish = function (params) {
-        return this.call(
-            `file/${params.fileId}/${params.fileVersion}/signature/finish`,
-            {
-                method: 'PUT',
-                params: {
-                    maxParts: 0,
-                    nextPartNumber: 0
-                }
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLDIMAGE:SIGFINISH', args);
-            return args;
-        });
-    };
 
     API.$on('WORLDIMAGE:SIGFINISH', function (args) {
         var { fileId, fileVersion } = args.params;
@@ -16064,23 +14376,8 @@ console.log(`isLinux: ${LINUX}`);
             id: $app.worldImage.worldId,
             imageUrl: `${API.endpointDomain}/file/${fileId}/${fileVersion}/file`
         };
-        this.setWorldImage(parmas);
+        imageRequest.setWorldImage(parmas);
     });
-
-    API.setWorldImage = function (params) {
-        return this.call(`worlds/${params.id}`, {
-            method: 'PUT',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLDIMAGE:SET', args);
-            this.$emit('WORLD', args);
-            return args;
-        });
-    };
 
     API.$on('AVATARIMAGE:SET', function (args) {
         $app.avatarDialog.loading = false;
@@ -16143,7 +14440,7 @@ console.log(`isLinux: ${LINUX}`);
                     $app.adjustDialogZ(this.$refs.changeAvatarImageDialog.$el)
                 );
             }
-            API.getAvatarImages(params).then((args) => {
+            imageRequest.getAvatarImages(params).then((args) => {
                 this.previousImagesTableFileId = args.json.id;
                 var images = [];
                 args.json.versions.forEach((item) => {
@@ -16160,7 +14457,7 @@ console.log(`isLinux: ${LINUX}`);
                     $app.adjustDialogZ(this.$refs.changeWorldImageDialog.$el)
                 );
             }
-            API.getWorldImages(params).then((args) => {
+            imageRequest.getWorldImages(params).then((args) => {
                 this.previousImagesTableFileId = args.json.id;
                 var images = [];
                 args.json.versions.forEach((item) => {
@@ -16171,7 +14468,7 @@ console.log(`isLinux: ${LINUX}`);
                 this.checkPreviousImageAvailable(images);
             });
         } else if (type === 'User') {
-            API.getAvatarImages(params).then((args) => {
+            imageRequest.getAvatarImages(params).then((args) => {
                 this.previousImagesTableFileId = args.json.id;
                 var images = [];
                 args.json.versions.forEach((item) => {
@@ -16214,34 +14511,6 @@ console.log(`isLinux: ${LINUX}`);
         $app.previousImagesDialogVisible = false;
     });
 
-    API.getAvatarImages = function (params) {
-        return this.call(`file/${params.fileId}`, {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('AVATARIMAGE:GET', args);
-            return args;
-        });
-    };
-
-    API.getWorldImages = function (params) {
-        return this.call(`file/${params.fileId}`, {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLDIMAGE:GET', args);
-            return args;
-        });
-    };
-
     API.$on('AVATARIMAGE:GET', function (args) {
         $app.storeAvatarImage(args);
     });
@@ -16272,7 +14541,7 @@ console.log(`isLinux: ${LINUX}`);
             id: this.avatarDialog.id,
             imageUrl: `${API.endpointDomain}/file/${this.previousImagesTableFileId}/${image.version}/file`
         };
-        API.setAvatarImage(parmas).finally(() => {
+        imageRequest.setAvatarImage(parmas).finally(() => {
             this.changeAvatarImageDialogLoading = false;
             this.changeAvatarImageDialogVisible = false;
         });
@@ -16282,27 +14551,29 @@ console.log(`isLinux: ${LINUX}`);
         document.getElementById('AvatarImageUploadButton').click();
     };
 
-    $app.methods.deleteAvatarImage = function () {
-        this.changeAvatarImageDialogLoading = true;
-        var parmas = {
-            fileId: this.previousImagesTableFileId,
-            version: this.previousImagesTable[0].version
-        };
-        API.deleteFileVersion(parmas)
-            .then((args) => {
-                this.previousImagesTableFileId = args.json.id;
-                var images = [];
-                args.json.versions.forEach((item) => {
-                    if (!item.deleted) {
-                        images.unshift(item);
-                    }
-                });
-                this.checkPreviousImageAvailable(images);
-            })
-            .finally(() => {
-                this.changeAvatarImageDialogLoading = false;
-            });
-    };
+    // images.pug line 63
+    // $app.methods.deleteAvatarImage = function () {
+    //     this.changeAvatarImageDialogLoading = true;
+    //     var parmas = {
+    //         fileId: this.previousImagesTableFileId,
+    //         version: this.previousImagesTable[0].version
+    //     };
+    //     vrcPlusIconRequest
+    //         .deleteFileVersion(parmas)
+    //         .then((args) => {
+    //             this.previousImagesTableFileId = args.json.id;
+    //             var images = [];
+    //             args.json.versions.forEach((item) => {
+    //                 if (!item.deleted) {
+    //                     images.unshift(item);
+    //                 }
+    //             });
+    //             this.checkPreviousImageAvailable(images);
+    //         })
+    //         .finally(() => {
+    //             this.changeAvatarImageDialogLoading = false;
+    //         });
+    // };
 
     $app.methods.setWorldImage = function (image) {
         this.changeWorldImageDialogLoading = true;
@@ -16310,7 +14581,7 @@ console.log(`isLinux: ${LINUX}`);
             id: this.worldDialog.id,
             imageUrl: `${API.endpointDomain}/file/${this.previousImagesTableFileId}/${image.version}/file`
         };
-        API.setWorldImage(parmas).finally(() => {
+        imageRequest.setWorldImage(parmas).finally(() => {
             this.changeWorldImageDialogLoading = false;
             this.changeWorldImageDialogVisible = false;
         });
@@ -16320,27 +14591,29 @@ console.log(`isLinux: ${LINUX}`);
         document.getElementById('WorldImageUploadButton').click();
     };
 
-    $app.methods.deleteWorldImage = function () {
-        this.changeWorldImageDialogLoading = true;
-        var parmas = {
-            fileId: this.previousImagesTableFileId,
-            version: this.previousImagesTable[0].version
-        };
-        API.deleteFileVersion(parmas)
-            .then((args) => {
-                this.previousImagesTableFileId = args.json.id;
-                var images = [];
-                args.json.versions.forEach((item) => {
-                    if (!item.deleted) {
-                        images.unshift(item);
-                    }
-                });
-                this.checkPreviousImageAvailable(images);
-            })
-            .finally(() => {
-                this.changeWorldImageDialogLoading = false;
-            });
-    };
+    // images.pug line 63
+    // $app.methods.deleteWorldImage = function () {
+    //     this.changeWorldImageDialogLoading = true;
+    //     var parmas = {
+    //         fileId: this.previousImagesTableFileId,
+    //         version: this.previousImagesTable[0].version
+    //     };
+    //     vrcPlusIconRequest
+    //         .deleteFileVersion(parmas)
+    //         .then((args) => {
+    //             this.previousImagesTableFileId = args.json.id;
+    //             var images = [];
+    //             args.json.versions.forEach((item) => {
+    //                 if (!item.deleted) {
+    //                     images.unshift(item);
+    //                 }
+    //             });
+    //             this.checkPreviousImageAvailable(images);
+    //         })
+    //         .finally(() => {
+    //             this.changeWorldImageDialogLoading = false;
+    //         });
+    // };
 
     $app.methods.compareCurrentImage = function (image) {
         if (
@@ -16367,7 +14640,7 @@ console.log(`isLinux: ${LINUX}`);
         if (API.cachedAvatarNames.has(fileId)) {
             return API.cachedAvatarNames.get(fileId);
         }
-        var args = await API.getAvatarImages({ fileId });
+        var args = await imageRequest.getAvatarImages({ fileId });
         return this.storeAvatarImage(args);
     };
 
@@ -16514,12 +14787,14 @@ console.log(`isLinux: ${LINUX}`);
             },
             cache_directory: {
                 name: $t('dialog.config_json.cache_directory'),
-                default: '%AppData%\\..\\LocalLow\\VRChat\\VRChat'
+                default: '%AppData%\\..\\LocalLow\\VRChat\\VRChat',
+                folderBrowser: true
             },
             picture_output_folder: {
                 name: $t('dialog.config_json.picture_directory'),
                 // my pictures folder
-                default: `%UserProfile%\\Pictures\\VRChat`
+                default: `%UserProfile%\\Pictures\\VRChat`,
+                folderBrowser: true
             },
             // dynamic_bone_max_affected_transform_count: {
             //     name: 'Dynamic Bones Limit Max Transforms (0 disable all transforms)',
@@ -16549,6 +14824,20 @@ console.log(`isLinux: ${LINUX}`);
         if (!this.VRChatUsedCacheSize) {
             this.getVRChatCacheSize();
         }
+    };
+
+    $app.methods.openConfigFolderBrowser = async function (value) {
+        var oldPath = this.VRChatConfigFile[value];
+        var newPath = await this.folderSelectorDialog(oldPath);
+        if (newPath) {
+            this.VRChatConfigFile[value] = newPath;
+        }
+        this.redrawVRChatConfigDialog();
+    };
+
+    $app.methods.redrawVRChatConfigDialog = function () {
+        this.VRChatConfigDialog.visible = false;
+        this.VRChatConfigDialog.visible = true;
     };
 
     $app.methods.saveVRChatConfigFile = function () {
@@ -16635,11 +14924,13 @@ console.log(`isLinux: ${LINUX}`);
     $app.methods.setVRChatCameraResolution = function (res) {
         this.VRChatConfigFile.camera_res_height = res.height;
         this.VRChatConfigFile.camera_res_width = res.width;
+        this.redrawVRChatConfigDialog();
     };
 
     $app.methods.setVRChatScreenshotResolution = function (res) {
         this.VRChatConfigFile.screenshot_res_height = res.height;
         this.VRChatConfigFile.screenshot_res_width = res.width;
+        this.redrawVRChatConfigDialog();
     };
 
     $app.methods.getVRChatSpoutResolution = function () {
@@ -16656,6 +14947,7 @@ console.log(`isLinux: ${LINUX}`);
     $app.methods.setVRChatSpoutResolution = function (res) {
         this.VRChatConfigFile.camera_spout_res_height = res.height;
         this.VRChatConfigFile.camera_spout_res_width = res.width;
+        this.redrawVRChatConfigDialog();
     };
 
     // Auto Launch Shortcuts
@@ -17037,7 +15329,8 @@ console.log(`isLinux: ${LINUX}`);
         D.isUploading = true;
         AppApi.GetFileBase64(D.metadata.filePath)
             .then((base64Body) => {
-                API.uploadGalleryImage(base64Body)
+                vrcPlusImageRequest
+                    .uploadGalleryImage(base64Body)
                     .then((args) => {
                         $app.$message({
                             message: $t('message.gallery.uploaded'),
@@ -17169,6 +15462,25 @@ console.log(`isLinux: ${LINUX}`);
         D.visible = true;
     };
 
+    // Launch Command Settings handling
+
+    $app.methods.toggleLaunchCommandSetting = async function (configKey = '') {
+        switch (configKey) {
+            case 'VRCX_showConfirmationOnSwitchAvatar':
+                this.showConfirmationOnSwitchAvatar =
+                    !this.showConfirmationOnSwitchAvatar;
+                await configRepository.setBool(
+                    'VRCX_showConfirmationOnSwitchAvatar',
+                    this.showConfirmationOnSwitchAvatar
+                );
+                break;
+            default:
+                throw new Error(
+                    'toggleLaunchCommandSetting: Unknown configKey'
+                );
+        }
+    };
+
     // Asset Bundle Cacher
 
     $app.methods.updateVRChatWorldCache = function () {
@@ -17253,17 +15565,6 @@ console.log(`isLinux: ${LINUX}`);
             variant,
             variantVersion
         );
-    };
-
-    API.getBundles = function (fileId) {
-        return this.call(`file/${fileId}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json
-            };
-            return args;
-        });
     };
 
     $app.methods.getDisplayName = function (userId) {
@@ -17354,7 +15655,7 @@ console.log(`isLinux: ${LINUX}`);
         }
         var { location } = this.lastLocation;
         AppApi.VrcClosedGracefully().then((result) => {
-            if (result || !this.isRealInstance(location)) {
+            if (result || !$utils.isRealInstance(location)) {
                 return;
             }
             // wait a bit for SteamVR to potentially close before deciding to relaunch
@@ -17522,7 +15823,9 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.getUserFavoriteWorlds = async function (userId) {
         this.userDialog.isFavoriteWorldsLoading = true;
-        this.$refs.favoriteWorlds.currentName = '0'; // select first tab
+        if (typeof this.$refs.favoriteWorlds !== 'undefined') {
+            this.$refs.favoriteWorlds.currentName = '0'; // select first tab
+        }
         this.userFavoriteWorlds = [];
         var worldLists = [];
         var params = {
@@ -17545,15 +15848,13 @@ console.log(`isLinux: ${LINUX}`);
                 tag: list.name
             };
             try {
-                var args = await API.getFavoriteWorlds(params);
+                var args = await favoriteRequest.getFavoriteWorlds(params);
                 worldLists.push([list.displayName, list.visibility, args.json]);
             } catch (err) {}
         }
         this.userFavoriteWorlds = worldLists;
         this.userDialog.isFavoriteWorldsLoading = false;
     };
-
-    $app.data.worldGroupVisibilityOptions = ['private', 'friends', 'public'];
 
     $app.methods.userFavoriteWorldsStatus = function (visibility) {
         var style = {};
@@ -17567,37 +15868,10 @@ console.log(`isLinux: ${LINUX}`);
         return style;
     };
 
-    $app.methods.userFavoriteWorldsStatusForFavTab = function (visibility) {
-        let style = '';
-        if (visibility === 'public') {
-            style = '';
-        } else if (visibility === 'friends') {
-            style = 'success';
-        } else {
-            style = 'info';
-        }
-        return style;
-    };
-
-    $app.methods.changeWorldGroupVisibility = function (name, visibility) {
-        var params = {
-            type: 'world',
-            group: name,
-            visibility
-        };
-        API.saveFavoriteGroup(params).then((args) => {
-            this.$message({
-                message: 'Group visibility changed',
-                type: 'success'
-            });
-            return args;
-        });
-    };
-
     $app.methods.refreshInstancePlayerCount = function (instance) {
         var L = $utils.parseLocation(instance);
-        if (L.worldId && L.instanceId) {
-            API.getInstance({
+        if (L.isRealInstance) {
+            instanceRequest.getInstance({
                 worldId: L.worldId,
                 instanceId: L.instanceId
             });
@@ -17673,19 +15947,6 @@ console.log(`isLinux: ${LINUX}`);
         }
         await this.sortCurrentUserGroups();
         this.userDialog.isGroupsLoading = false;
-    };
-
-    $app.methods.getCurrentUserGroups = async function () {
-        var args = await API.getGroups({ userId: API.currentUser.id });
-        API.currentUserGroups.clear();
-        for (var group of args.json) {
-            var ref = API.applyGroup(group);
-            if (!API.currentUserGroups.has(group.id)) {
-                API.currentUserGroups.set(group.id, ref);
-            }
-        }
-        await API.getGroupPermissions({ userId: API.currentUser.id });
-        this.saveCurrentUserGroups();
     };
 
     $app.data.inGameGroupOrder = [];
@@ -17876,7 +16137,7 @@ console.log(`isLinux: ${LINUX}`);
             n: 100,
             tag: 'gallery'
         };
-        API.getFileList(params);
+        vrcPlusIconRequest.getFileList(params);
     };
 
     API.$on('FILES:LIST', function (args) {
@@ -17913,7 +16174,7 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.deleteGalleryImage = function (fileId) {
-        API.deleteFile(fileId).then((args) => {
+        vrcPlusIconRequest.deleteFile(fileId).then((args) => {
             API.$emit('GALLERYIMAGE:DELETE', args);
             return args;
         });
@@ -17970,7 +16231,7 @@ console.log(`isLinux: ${LINUX}`);
         var r = new FileReader();
         r.onload = function () {
             var base64Body = btoa(r.result);
-            API.uploadGalleryImage(base64Body).then((args) => {
+            vrcPlusImageRequest.uploadGalleryImage(base64Body).then((args) => {
                 $app.$message({
                     message: $t('message.gallery.uploaded'),
                     type: 'success'
@@ -17984,25 +16245,6 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.displayGalleryUpload = function () {
         document.getElementById('GalleryUploadButton').click();
-    };
-
-    API.uploadGalleryImage = function (imageData) {
-        var params = {
-            tag: 'gallery'
-        };
-        return this.call('file/image', {
-            uploadImage: true,
-            matchingDimensions: false,
-            postData: JSON.stringify(params),
-            imageData
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('GALLERYIMAGE:ADD', args);
-            return args;
-        });
     };
 
     API.$on('GALLERYIMAGE:ADD', function (args) {
@@ -18023,7 +16265,7 @@ console.log(`isLinux: ${LINUX}`);
             n: 100,
             tag: 'sticker'
         };
-        API.getFileList(params);
+        vrcPlusIconRequest.getFileList(params);
     };
 
     API.$on('FILES:LIST', function (args) {
@@ -18034,7 +16276,7 @@ console.log(`isLinux: ${LINUX}`);
     });
 
     $app.methods.deleteSticker = function (fileId) {
-        API.deleteFile(fileId).then((args) => {
+        vrcPlusIconRequest.deleteFile(fileId).then((args) => {
             API.$emit('STICKER:DELETE', args);
             return args;
         });
@@ -18085,13 +16327,15 @@ console.log(`isLinux: ${LINUX}`);
                 maskTag: 'square'
             };
             var base64Body = btoa(r.result);
-            API.uploadSticker(base64Body, params).then((args) => {
-                $app.$message({
-                    message: $t('message.sticker.uploaded'),
-                    type: 'success'
+            vrcPlusImageRequest
+                .uploadSticker(base64Body, params)
+                .then((args) => {
+                    $app.$message({
+                        message: $t('message.sticker.uploaded'),
+                        type: 'success'
+                    });
+                    return args;
                 });
-                return args;
-            });
         };
         r.readAsBinaryString(files[0]);
         clearFile();
@@ -18099,22 +16343,6 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.displayStickerUpload = function () {
         document.getElementById('StickerUploadButton').click();
-    };
-
-    API.uploadSticker = function (imageData, params) {
-        return this.call('file/image', {
-            uploadImage: true,
-            matchingDimensions: true,
-            postData: JSON.stringify(params),
-            imageData
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('STICKER:ADD', args);
-            return args;
-        });
     };
 
     API.$on('STICKER:ADD', function (args) {
@@ -18205,34 +16433,7 @@ console.log(`isLinux: ${LINUX}`);
         var params = {
             n: 100
         };
-        API.getPrints(params);
-    };
-
-    API.getPrints = function (params) {
-        return this.call(`prints/user/${API.currentUser.id}`, {
-            method: 'GET',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('PRINT:LIST', args);
-            return args;
-        });
-    };
-
-    API.deletePrint = function (printId) {
-        return this.call(`prints/${printId}`, {
-            method: 'DELETE'
-        }).then((json) => {
-            var args = {
-                json,
-                printId
-            };
-            this.$emit('PRINT:DELETE', args);
-            return args;
-        });
+        vrcPlusImageRequest.getPrints(params);
     };
 
     API.$on('PRINT:LIST', function (args) {
@@ -18241,7 +16442,7 @@ console.log(`isLinux: ${LINUX}`);
     });
 
     $app.methods.deletePrint = function (printId) {
-        API.deletePrint(printId);
+        vrcPlusImageRequest.deletePrint(printId);
     };
 
     API.$on('PRINT:DELETE', function (args) {
@@ -18296,7 +16497,7 @@ console.log(`isLinux: ${LINUX}`);
                 timestamp
             };
             var base64Body = btoa(r.result);
-            API.uploadPrint(base64Body, params).then((args) => {
+            vrcPlusImageRequest.uploadPrint(base64Body, params).then((args) => {
                 $app.$message({
                     message: $t('message.print.uploaded'),
                     type: 'success'
@@ -18312,53 +16513,11 @@ console.log(`isLinux: ${LINUX}`);
         document.getElementById('PrintUploadButton').click();
     };
 
-    API.uploadPrint = function (imageData, params) {
-        return this.call('prints', {
-            uploadImagePrint: true,
-            postData: JSON.stringify(params),
-            imageData
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('PRINT:ADD', args);
-            return args;
-        });
-    };
-
     API.$on('PRINT:ADD', function (args) {
         if (Object.keys($app.printTable).length !== 0) {
             $app.printTable.unshift(args.json);
         }
     });
-
-    API.getPrint = function (params) {
-        return this.call(`prints/${params.printId}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('PRINT', args);
-            return args;
-        });
-    };
-
-    API.editPrint = function (params) {
-        return this.call(`prints/${params.printId}`, {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('PRINT:EDIT', args);
-            return args;
-        });
-    };
 
     $app.data.saveInstancePrints = await configRepository.getBool(
         'VRCX_saveInstancePrints',
@@ -18415,34 +16574,47 @@ console.log(`isLinux: ${LINUX}`);
     $app.data.printQueueWorker = undefined;
 
     $app.methods.queueSavePrintToFile = function (printId) {
-        if ($app.printCache.includes(printId)) return;
-        $app.printCache.push(printId);
-        if ($app.printCache.length > 100) {
-            $app.printCache.shift();
+        if (this.printCache.includes(printId)) {
+            return;
+        }
+        this.printCache.push(printId);
+        if (this.printCache.length > 100) {
+            this.printCache.shift();
         }
 
-        $app.printQueue.push(printId);
+        this.printQueue.push(printId);
 
-        if (!$app.printQueueWorker) {
-            $app.printQueueWorker = workerTimers.setInterval(() => {
-                let printId = $app.printQueue.shift();
+        if (!this.printQueueWorker) {
+            this.printQueueWorker = workerTimers.setInterval(() => {
+                let printId = this.printQueue.shift();
                 if (printId) {
-                    $app.trySavePrintToFile(printId);
+                    this.trySavePrintToFile(printId);
                 }
             }, 2_500);
         }
     };
 
     $app.methods.trySavePrintToFile = async function (printId) {
-        var args = await API.getPrint({ printId });
+        var args = await vrcPlusImageRequest.getPrint({ printId });
         var imageUrl = args.json?.files?.image;
         if (!imageUrl) {
             console.error('Print image URL is missing', args);
             return;
         }
-        var createdAt = this.getPrintLocalDate(args.json);
+        var print = args.json;
+        var createdAt = this.getPrintLocalDate(print);
+        try {
+            var owner = await userRequest.getCachedUser({
+                userId: print.ownerId
+            });
+            console.log(
+                `Print spawned by ${owner?.json?.displayName} id:${print.id} note:${print.note} authorName:${print.authorName} at:${new Date().toISOString()}`
+            );
+        } catch (err) {
+            console.error(err);
+        }
         var monthFolder = createdAt.toISOString().slice(0, 7);
-        var fileName = this.getPrintFileName(args.json);
+        var fileName = this.getPrintFileName(print);
         var filePath = await AppApi.SavePrintToFile(
             imageUrl,
             this.ugcFolderPath,
@@ -18451,15 +16623,16 @@ console.log(`isLinux: ${LINUX}`);
         );
         if (filePath) {
             console.log(`Print saved to file: ${monthFolder}\\${fileName}`);
-
             if (this.cropInstancePrints) {
-                await AppApi.CropPrintImage(filePath);
+                if (!(await AppApi.CropPrintImage(filePath))) {
+                    console.error('Failed to crop print image');
+                }
             }
         }
 
-        if ($app.printQueue.length == 0) {
-            workerTimers.clearInterval($app.printQueueWorker);
-            $app.printQueueWorker = undefined;
+        if (this.printQueue.length == 0) {
+            workerTimers.clearInterval(this.printQueueWorker);
+            this.printQueueWorker = undefined;
         }
     };
 
@@ -18476,7 +16649,7 @@ console.log(`isLinux: ${LINUX}`);
             n: 100,
             tag: 'emoji'
         };
-        API.getFileList(params);
+        vrcPlusIconRequest.getFileList(params);
     };
 
     API.$on('FILES:LIST', function (args) {
@@ -18487,7 +16660,7 @@ console.log(`isLinux: ${LINUX}`);
     });
 
     $app.methods.deleteEmoji = function (fileId) {
-        API.deleteFile(fileId).then((args) => {
+        vrcPlusIconRequest.deleteFile(fileId).then((args) => {
             API.$emit('EMOJI:DELETE', args);
             return args;
         });
@@ -18548,7 +16721,7 @@ console.log(`isLinux: ${LINUX}`);
                 params.loopStyle = 'pingpong';
             }
             var base64Body = btoa(r.result);
-            API.uploadEmoji(base64Body, params).then((args) => {
+            vrcPlusImageRequest.uploadEmoji(base64Body, params).then((args) => {
                 $app.$message({
                     message: $t('message.emoji.uploaded'),
                     type: 'success'
@@ -18562,22 +16735,6 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.displayEmojiUpload = function () {
         document.getElementById('EmojiUploadButton').click();
-    };
-
-    API.uploadEmoji = function (imageData, params) {
-        return this.call('file/image', {
-            uploadImage: true,
-            matchingDimensions: true,
-            postData: JSON.stringify(params),
-            imageData
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('EMOJI:ADD', args);
-            return args;
-        });
     };
 
     API.$on('EMOJI:ADD', function (args) {
@@ -18778,7 +16935,6 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.setAsideWidth = async function () {
-        document.getElementById('aside').style.width = `${this.asideWidth}px`;
         await configRepository.setInt('VRCX_sidePanelWidth', this.asideWidth);
     };
 
@@ -18828,14 +16984,27 @@ console.log(`isLinux: ${LINUX}`);
         return false;
     };
 
-    $app.methods.userImage = function (user) {
-        if (typeof user === 'undefined') {
+    $app.methods.userImage = function (user, isIcon, resolution = '64') {
+        if (!user) {
             return '';
         }
+        // Only VRC+ icon users have the userIcon field ?
         if (this.displayVRCPlusIconsAsAvatar && user.userIcon) {
+            if (isIcon) {
+                const baseUrl = user.userIcon.replace('/file/', '/image/');
+                return user.userIcon.endsWith('/')
+                    ? `${baseUrl}${resolution}`
+                    : `${baseUrl}/${resolution}`;
+            }
             return user.userIcon;
         }
         if (user.profilePicOverrideThumbnail) {
+            if (isIcon) {
+                return user.profilePicOverrideThumbnail.replace(
+                    '256',
+                    resolution
+                );
+            }
             return user.profilePicOverrideThumbnail;
         }
         if (user.profilePicOverride) {
@@ -18844,7 +17013,13 @@ console.log(`isLinux: ${LINUX}`);
         if (user.thumbnailUrl) {
             return user.thumbnailUrl;
         }
-        return user.currentAvatarThumbnailImageUrl;
+        if (isIcon && user.currentAvatarThumbnailImageUrl) {
+            return user.currentAvatarThumbnailImageUrl.replace(
+                '256',
+                resolution
+            );
+        }
+        return user.currentAvatarThumbnailImageUrl || '';
     };
 
     $app.methods.userImageFull = function (user) {
@@ -18945,7 +17120,7 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.data.ipcEnabled = false;
     $app.methods.ipcEvent = function (json) {
-        if (!this.friendLogInitStatus) {
+        if (!API.isLoggedIn) {
             return;
         }
         try {
@@ -19034,7 +17209,6 @@ console.log(`isLinux: ${LINUX}`);
                 this.externalNotifierVersion = data.version;
                 break;
             case 'LaunchCommand':
-                AppApi.FocusWindow();
                 this.eventLaunchCommand(data.command);
                 break;
             case 'VRCXLaunch':
@@ -19205,7 +17379,8 @@ console.log(`isLinux: ${LINUX}`);
         console.log('LaunchCommand:', input);
         var args = input.split('/');
         var command = args[0];
-        var commandArg = args[1];
+        var commandArg = args[1]?.trim();
+        var shouldFocusWindow = true;
         switch (command) {
             case 'world':
                 this.directAccessWorld(input.replace('world/', ''));
@@ -19222,7 +17397,7 @@ console.log(`isLinux: ${LINUX}`);
             case 'local-favorite-world':
                 console.log('local-favorite-world', commandArg);
                 var [id, group] = commandArg.split(':');
-                API.getCachedWorld({ worldId: id }).then((args1) => {
+                worldRequest.getCachedWorld({ worldId: id }).then((args1) => {
                     this.directAccessWorld(id);
                     this.addLocalWorldFavorite(id, group);
                     return args1;
@@ -19230,6 +17405,26 @@ console.log(`isLinux: ${LINUX}`);
                 break;
             case 'addavatardb':
                 this.addAvatarProvider(input.replace('addavatardb/', ''));
+                break;
+            case 'switchavatar':
+                var avatarId = commandArg;
+                var regexAvatarId =
+                    /avtr_[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}/g;
+                if (!avatarId.match(regexAvatarId) || avatarId.length !== 41) {
+                    this.$message({
+                        message: 'Invalid Avatar ID',
+                        type: 'error'
+                    });
+                    break;
+                }
+                if (this.showConfirmationOnSwitchAvatar) {
+                    this.selectAvatarWithConfirmation(avatarId);
+                    // Makes sure the window is focused
+                    shouldFocusWindow = true;
+                } else {
+                    this.selectAvatarWithoutConfirmation(avatarId);
+                    shouldFocusWindow = false;
+                }
                 break;
             case 'import':
                 var type = args[1];
@@ -19246,6 +17441,9 @@ console.log(`isLinux: ${LINUX}`);
                     this.friendImportDialog.input = data;
                 }
                 break;
+        }
+        if (shouldFocusWindow) {
+            AppApi.FocusWindow();
         }
     };
 
@@ -19323,7 +17521,7 @@ console.log(`isLinux: ${LINUX}`);
                 }
                 array.push(ref);
             }
-            array.sort(compareByCreatedAt);
+            array.sort($utils.compareByCreatedAt);
             this.previousInstancesUserDialogTable.data = array;
             D.loading = false;
             workerTimers.setTimeout(() => D.forceUpdate++, 150);
@@ -19426,7 +17624,7 @@ console.log(`isLinux: ${LINUX}`);
                 }
                 array.push(ref);
             }
-            array.sort(compareByCreatedAt);
+            array.sort($utils.compareByCreatedAt);
             this.previousInstancesWorldDialogTable.data = array;
             D.loading = false;
             workerTimers.setTimeout(() => D.forceUpdate++, 150);
@@ -19456,61 +17654,12 @@ console.log(`isLinux: ${LINUX}`);
     // #endregion
     // #region | App: Previous Instance Info Dialog
 
-    $app.data.previousInstanceInfoDialogTable = {
-        data: [],
-        filters: [
-            {
-                prop: 'displayName',
-                value: ''
-            }
-        ],
-        tableProps: {
-            stripe: true,
-            size: 'mini',
-            defaultSort: {
-                prop: 'created_at',
-                order: 'descending'
-            }
-        },
-        pageSize: 10,
-        paginationProps: {
-            small: true,
-            layout: 'sizes,prev,pager,next,total',
-            pageSizes: [10, 25, 50, 100]
-        }
-    };
-
-    $app.data.previousInstanceInfoDialog = {
-        visible: false,
-        loading: false,
-        forceUpdate: 0,
-        $location: {}
-    };
+    $app.data.previousInstanceInfoDialogVisible = false;
+    $app.data.previousInstanceInfoDialogInstanceId = '';
 
     $app.methods.showPreviousInstanceInfoDialog = function (instanceId) {
-        this.$nextTick(() =>
-            $app.adjustDialogZ(this.$refs.previousInstanceInfoDialog.$el)
-        );
-        var D = this.previousInstanceInfoDialog;
-        D.$location = $utils.parseLocation(instanceId);
-        D.visible = true;
-        D.loading = true;
-        this.refreshPreviousInstanceInfoTable();
-    };
-
-    $app.methods.refreshPreviousInstanceInfoTable = function () {
-        var D = this.previousInstanceInfoDialog;
-        database.getPlayersFromInstance(D.$location.tag).then((data) => {
-            var array = [];
-            for (var entry of Array.from(data.values())) {
-                entry.timer = $app.timeToText(entry.time);
-                array.push(entry);
-            }
-            array.sort(compareByCreatedAt);
-            this.previousInstanceInfoDialogTable.data = array;
-            D.loading = false;
-            workerTimers.setTimeout(() => D.forceUpdate++, 150);
-        });
+        this.previousInstanceInfoDialogVisible = true;
+        this.previousInstanceInfoDialogInstanceId = instanceId;
     };
 
     $app.data.dtHour12 = await configRepository.getBool('VRCX_dtHour12', false);
@@ -19576,9 +17725,22 @@ console.log(`isLinux: ${LINUX}`);
                 if (!date) {
                     return '-';
                 }
-                var dt = new Date(date);
+                const dt = new Date(date);
                 if (format === 'long') {
-                    return dt.toISOString();
+                    const formatDate = (date) => {
+                        const padZero = (num) => String(num).padStart(2, '0');
+
+                        const year = date.getFullYear();
+                        const month = padZero(date.getMonth() + 1);
+                        const day = padZero(date.getDate());
+                        const hours = padZero(date.getHours());
+                        const minutes = padZero(date.getMinutes());
+                        const seconds = padZero(date.getSeconds());
+
+                        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                    };
+
+                    return formatDate(dt);
                 } else if (format === 'short') {
                     return dt
                         .toLocaleDateString('en-nz', {
@@ -19732,23 +17894,6 @@ console.log(`isLinux: ${LINUX}`);
         return false;
     };
 
-    $app.methods.isRealInstance = function (instanceId) {
-        if (!instanceId) {
-            return false;
-        }
-        switch (instanceId) {
-            case 'offline':
-            case 'offline:offline':
-            case 'private':
-            case 'private:private':
-            case 'traveling':
-            case 'traveling:traveling':
-            case instanceId.startsWith('local'):
-                return false;
-        }
-        return true;
-    };
-
     $app.methods.onPlayerTraveling = function (ref) {
         if (
             !this.isGameRunning ||
@@ -19770,7 +17915,6 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.updateCurrentUserLocation = function () {
-        API.currentUser.$travelingToTime = this.lastLocationDestinationTime;
         var ref = API.cachedUsers.get(API.currentUser.id);
         if (typeof ref === 'undefined') {
             return;
@@ -19778,7 +17922,8 @@ console.log(`isLinux: ${LINUX}`);
 
         // update cached user with both gameLog and API locations
         var currentLocation = API.currentUser.$locationTag;
-        if (API.currentUser.$location === 'traveling') {
+        var L = $utils.parseLocation(currentLocation);
+        if (L.isTraveling) {
             currentLocation = API.currentUser.$travelingToLocation;
         }
         ref.location = API.currentUser.$locationTag;
@@ -19810,13 +17955,18 @@ console.log(`isLinux: ${LINUX}`);
         } else {
             ref.$location_at = this.lastLocation.date;
             ref.$travelingToTime = this.lastLocationDestinationTime;
+            API.currentUser.$travelingToTime = this.lastLocationDestinationTime;
         }
     };
 
-    $app.methods.setCurrentUserLocation = async function (location) {
+    $app.methods.setCurrentUserLocation = async function (
+        location,
+        travelingToLocation
+    ) {
         API.currentUser.$location_at = Date.now();
         API.currentUser.$travelingToTime = Date.now();
         API.currentUser.$locationTag = location;
+        API.currentUser.$travelingToLocation = travelingToLocation;
         this.updateCurrentUserLocation();
 
         // janky gameLog support for Quest
@@ -19838,7 +17988,7 @@ console.log(`isLinux: ${LINUX}`);
         this.lastLocationDestination = '';
         this.lastLocationDestinationTime = 0;
 
-        if (this.isRealInstance(location)) {
+        if ($utils.isRealInstance(location)) {
             var dt = new Date().toJSON();
             var L = $utils.parseLocation(location);
 
@@ -19886,7 +18036,7 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.addAvatarToHistory = function (avatarId) {
-        API.getAvatar({ avatarId }).then((args) => {
+        avatarRequest.getAvatar({ avatarId }).then((args) => {
             var { ref } = args;
 
             database.addAvatarToCache(ref);
@@ -20055,7 +18205,7 @@ console.log(`isLinux: ${LINUX}`);
             var worldId = data[i];
             if (!D.worldIdList.has(worldId)) {
                 try {
-                    var args = await API.getWorld({
+                    var args = await worldRequest.getWorld({
                         worldId
                     });
                     this.worldImportTable.data.push(args.ref);
@@ -20154,118 +18304,7 @@ console.log(`isLinux: ${LINUX}`);
         $app.worldImportDialog.visible = false;
         $app.worldImportFavoriteGroup = null;
         $app.worldImportLocalFavoriteGroup = null;
-
-        $app.worldExportDialogVisible = false;
-        $app.worldExportFavoriteGroup = null;
-        $app.worldExportLocalFavoriteGroup = null;
     });
-
-    // #endregion
-    // #region | App: world favorite export
-
-    $app.data.worldExportDialogRef = {};
-    $app.data.worldExportDialogVisible = false;
-    $app.data.worldExportContent = '';
-    $app.data.worldExportFavoriteGroup = null;
-    $app.data.worldExportLocalFavoriteGroup = null;
-
-    $app.methods.showWorldExportDialog = function () {
-        this.$nextTick(() =>
-            $app.adjustDialogZ(this.$refs.worldExportDialogRef.$el)
-        );
-        this.worldExportFavoriteGroup = null;
-        this.worldExportLocalFavoriteGroup = null;
-        this.updateWorldExportDialog();
-        this.worldExportDialogVisible = true;
-    };
-
-    $app.methods.handleCopyWorldExportData = function (event) {
-        event.target.tagName === 'TEXTAREA' && event.target.select();
-        navigator.clipboard
-            .writeText(this.worldExportContent)
-            .then(() => {
-                this.$message({
-                    message: 'Copied successfully!',
-                    type: 'success',
-                    duration: 2000
-                });
-            })
-            .catch((err) => {
-                console.error('Copy failed:', err);
-                this.$message.error('Copy failed!');
-            });
-    };
-
-    $app.methods.updateWorldExportDialog = function () {
-        const formatter = function (str) {
-            if (/[\x00-\x1f,"]/.test(str) === true) {
-                return `"${str.replace(/"/g, '""')}"`;
-            }
-            return str;
-        };
-
-        function resText(ref) {
-            let resArr = [];
-            propsForQuery.forEach((e) => {
-                resArr.push(formatter(ref?.[e]));
-            });
-            return resArr.join(',');
-        }
-
-        const lines = [this.exportSelectedOptions.join(',')];
-        const propsForQuery = this.exportSelectOptions
-            .filter((option) =>
-                this.exportSelectedOptions.includes(option.label)
-            )
-            .map((option) => option.value);
-
-        if (this.worldExportFavoriteGroup) {
-            API.favoriteWorldGroups.forEach((group) => {
-                if (this.worldExportFavoriteGroup === group) {
-                    $app.favoriteWorlds.forEach((ref) => {
-                        if (group.key === ref.groupKey) {
-                            lines.push(resText(ref.ref));
-                        }
-                    });
-                }
-            });
-        } else if (this.worldExportLocalFavoriteGroup) {
-            const favoriteGroup =
-                this.localWorldFavorites[this.worldExportLocalFavoriteGroup];
-            if (!favoriteGroup) {
-                return;
-            }
-            for (let i = 0; i < favoriteGroup.length; ++i) {
-                const ref = favoriteGroup[i];
-                lines.push(resText(ref));
-            }
-        } else {
-            // export all
-            this.favoriteWorlds.forEach((ref) => {
-                lines.push(resText(ref.ref));
-            });
-            for (let i = 0; i < this.localWorldFavoritesList.length; ++i) {
-                const worldId = this.localWorldFavoritesList[i];
-                const ref = API.cachedWorlds.get(worldId);
-                if (typeof ref !== 'undefined') {
-                    lines.push(resText(ref));
-                }
-            }
-        }
-        this.worldExportContent = lines.join('\n');
-    };
-
-    $app.methods.selectWorldExportGroup = function (group) {
-        this.worldExportFavoriteGroup = group;
-        this.worldExportLocalFavoriteGroup = null;
-        this.updateWorldExportDialog();
-    };
-
-    $app.methods.selectWorldExportLocalGroup = function (group) {
-        this.worldExportLocalFavoriteGroup = group;
-        this.worldExportFavoriteGroup = null;
-        this.updateWorldExportDialog();
-    };
 
     // #endregion
     // #region | App: avatar favorite import
@@ -20327,7 +18366,7 @@ console.log(`isLinux: ${LINUX}`);
             var avatarId = data[i];
             if (!D.avatarIdList.has(avatarId)) {
                 try {
-                    var args = await API.getAvatar({
+                    var args = await avatarRequest.getAvatar({
                         avatarId
                     });
                     this.avatarImportTable.data.push(args.ref);
@@ -20382,6 +18421,23 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.importAvatarImportTable = async function () {
+        const addFavoriteAvatar = function (ref, group, message) {
+            return favoriteRequest
+                .addFavorite({
+                    type: 'avatar',
+                    favoriteId: ref.id,
+                    tags: group.name
+                })
+                .then((args) => {
+                    if (message) {
+                        this.$message({
+                            message: 'Avatar added to favorites',
+                            type: 'success'
+                        });
+                    }
+                    return args;
+                });
+        };
         var D = this.avatarImportDialog;
         if (!D.avatarImportFavoriteGroup && !D.avatarImportLocalFavoriteGroup) {
             return;
@@ -20396,7 +18452,7 @@ console.log(`isLinux: ${LINUX}`);
                 }
                 var ref = data[i];
                 if (D.avatarImportFavoriteGroup) {
-                    await this.addFavoriteAvatar(
+                    await addFavoriteAvatar(
                         ref,
                         D.avatarImportFavoriteGroup,
                         false
@@ -20426,135 +18482,7 @@ console.log(`isLinux: ${LINUX}`);
         $app.avatarImportDialog.visible = false;
         $app.avatarImportFavoriteGroup = null;
         $app.avatarImportLocalFavoriteGroup = null;
-
-        $app.avatarExportDialogVisible = false;
-        $app.avatarExportFavoriteGroup = null;
-        $app.avatarExportLocalFavoriteGroup = null;
     });
-
-    // #endregion
-    // #region | App: avatar favorite export
-
-    $app.data.avatarExportDialogRef = {};
-    $app.data.avatarExportDialogVisible = false;
-    $app.data.avatarExportContent = '';
-    $app.data.avatarExportFavoriteGroup = null;
-    $app.data.avatarExportLocalFavoriteGroup = null;
-
-    // Storage of selected filtering options for model and world export
-    $app.data.exportSelectedOptions = ['ID', 'Name'];
-    $app.data.exportSelectOptions = [
-        { label: 'ID', value: 'id' },
-        { label: 'Name', value: 'name' },
-        { label: 'Author ID', value: 'authorId' },
-        { label: 'Author Name', value: 'authorName' },
-        { label: 'Thumbnail', value: 'thumbnailImageUrl' }
-    ];
-
-    $app.methods.showAvatarExportDialog = function () {
-        this.$nextTick(() =>
-            $app.adjustDialogZ(this.$refs.avatarExportDialogRef.$el)
-        );
-        this.avatarExportFavoriteGroup = null;
-        this.avatarExportLocalFavoriteGroup = null;
-        this.updateAvatarExportDialog();
-        this.avatarExportDialogVisible = true;
-    };
-
-    $app.methods.handleCopyAvatarExportData = function (event) {
-        event.target.tagName === 'TEXTAREA' && event.target.select();
-        navigator.clipboard
-            .writeText(this.avatarExportContent)
-            .then(() => {
-                this.$message({
-                    message: 'Copied successfully!',
-                    type: 'success',
-                    duration: 2000
-                });
-            })
-            .catch((err) => {
-                console.error('Copy failed:', err);
-                this.$message.error('Copy failed!');
-            });
-    };
-
-    /**
-     * Update the content of the avatar export dialog based on the selected options
-     */
-
-    $app.methods.updateAvatarExportDialog = function () {
-        const formatter = function (str) {
-            if (/[\x00-\x1f,"]/.test(str) === true) {
-                return `"${str.replace(/"/g, '""')}"`;
-            }
-            return str;
-        };
-
-        function resText(ref) {
-            let resArr = [];
-            propsForQuery.forEach((e) => {
-                resArr.push(formatter(ref?.[e]));
-            });
-            return resArr.join(',');
-        }
-
-        const lines = [this.exportSelectedOptions.join(',')];
-        const propsForQuery = this.exportSelectOptions
-            .filter((option) =>
-                this.exportSelectedOptions.includes(option.label)
-            )
-            .map((option) => option.value);
-
-        if (this.avatarExportFavoriteGroup) {
-            API.favoriteAvatarGroups.forEach((group) => {
-                if (
-                    !this.avatarExportFavoriteGroup ||
-                    this.avatarExportFavoriteGroup === group
-                ) {
-                    $app.favoriteAvatars.forEach((ref) => {
-                        if (group.key === ref.groupKey) {
-                            lines.push(resText(ref.ref));
-                        }
-                    });
-                }
-            });
-        } else if (this.avatarExportLocalFavoriteGroup) {
-            const favoriteGroup =
-                this.localAvatarFavorites[this.avatarExportLocalFavoriteGroup];
-            if (!favoriteGroup) {
-                return;
-            }
-            for (let i = 0; i < favoriteGroup.length; ++i) {
-                const ref = favoriteGroup[i];
-                lines.push(resText(ref));
-            }
-        } else {
-            // export all
-            this.favoriteAvatars.forEach((ref) => {
-                lines.push(resText(ref.ref));
-            });
-            for (let i = 0; i < this.localAvatarFavoritesList.length; ++i) {
-                const avatarId = this.localAvatarFavoritesList[i];
-                const ref = API.cachedAvatars.get(avatarId);
-                if (typeof ref !== 'undefined') {
-                    lines.push(resText(ref));
-                }
-            }
-        }
-        this.avatarExportContent = lines.join('\n');
-    };
-
-    $app.methods.selectAvatarExportGroup = function (group) {
-        this.avatarExportFavoriteGroup = group;
-        this.avatarExportLocalFavoriteGroup = null;
-        this.updateAvatarExportDialog();
-    };
-
-    $app.methods.selectAvatarExportLocalGroup = function (group) {
-        this.avatarExportLocalFavoriteGroup = group;
-        this.avatarExportFavoriteGroup = null;
-        this.updateAvatarExportDialog();
-    };
 
     // #endregion
     // #region | App: friend favorite import
@@ -20615,7 +18543,7 @@ console.log(`isLinux: ${LINUX}`);
             var userId = data[i];
             if (!D.userIdList.has(userId)) {
                 try {
-                    var args = await API.getUser({
+                    var args = await userRequest.getUser({
                         userId
                     });
                     this.friendImportTable.data.push(args.ref);
@@ -20703,83 +18631,7 @@ console.log(`isLinux: ${LINUX}`);
     });
 
     // #endregion
-    // #region | App: friend favorite export
-
-    $app.data.friendExportDialogRef = {};
-    $app.data.friendExportDialogVisible = false;
-    $app.data.friendExportContent = '';
-    $app.data.friendExportFavoriteGroup = null;
-
-    $app.methods.showFriendExportDialog = function () {
-        this.$nextTick(() =>
-            $app.adjustDialogZ(this.$refs.friendExportDialogRef.$el)
-        );
-        this.friendExportFavoriteGroup = null;
-        this.updateFriendExportDialog();
-        this.friendExportDialogVisible = true;
-    };
-
-    $app.methods.handleCopyFriendExportData = function (event) {
-        event.target.tagName === 'TEXTAREA' && event.target.select();
-        navigator.clipboard
-            .writeText(this.friendExportContent)
-            .then(() => {
-                this.$message({
-                    message: 'Copied successfully!',
-                    type: 'success',
-                    duration: 2000
-                });
-            })
-            .catch((err) => {
-                console.error('Copy failed:', err);
-                this.$message.error('Copy failed!');
-            });
-    };
-
-    $app.methods.updateFriendExportDialog = function () {
-        var _ = function (str) {
-            if (/[\x00-\x1f,"]/.test(str) === true) {
-                return `"${str.replace(/"/g, '""')}"`;
-            }
-            return str;
-        };
-        var lines = ['UserID,Name'];
-        API.favoriteFriendGroups.forEach((group) => {
-            if (
-                !this.friendExportFavoriteGroup ||
-                this.friendExportFavoriteGroup === group
-            ) {
-                $app.favoriteFriends.forEach((ref) => {
-                    if (group.key === ref.groupKey) {
-                        lines.push(`${_(ref.id)},${_(ref.name)}`);
-                    }
-                });
-            }
-        });
-        this.friendExportContent = lines.join('\n');
-    };
-
-    $app.methods.selectFriendExportGroup = function (group) {
-        this.friendExportFavoriteGroup = group;
-        this.updateFriendExportDialog();
-    };
-
-    // #endregion
     // #region | App: user dialog notes
-
-    API.saveNote = function (params) {
-        return this.call('userNotes', {
-            method: 'POST',
-            params
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('NOTE', args);
-            return args;
-        });
-    };
 
     API.$on('NOTE', function (args) {
         var note = '';
@@ -20796,7 +18648,7 @@ console.log(`isLinux: ${LINUX}`);
                 $app.userDialog.note = note;
             } else {
                 // response is cached sadge :<
-                this.getUser({ userId: targetUserId });
+                userRequest.getUser({ userId: targetUserId });
             }
         }
         var ref = API.cachedUsers.get(targetUserId);
@@ -20820,7 +18672,7 @@ console.log(`isLinux: ${LINUX}`);
         if (this.userDialog.id === userId) {
             this.userDialog.noteSaving = true;
         }
-        return API.saveNote({
+        return miscRequest.saveNote({
             targetUserId: userId,
             note
         });
@@ -20830,7 +18682,7 @@ console.log(`isLinux: ${LINUX}`);
         if (this.userDialog.id === userId) {
             this.userDialog.noteSaving = true;
         }
-        return API.saveNote({
+        return miscRequest.saveNote({
             targetUserId: userId,
             note: ''
         });
@@ -20904,7 +18756,7 @@ console.log(`isLinux: ${LINUX}`);
             for (var i = data.length - 1; i >= 0; i--) {
                 if (D.visible && D.loading) {
                     var ctx = data[i];
-                    await API.saveNote({
+                    await miscRequest.saveNote({
                         targetUserId: ctx.id,
                         note: ctx.memo.slice(0, 256)
                     });
@@ -20934,9 +18786,7 @@ console.log(`isLinux: ${LINUX}`);
         ''
     );
 
-    $app.data.userGeneratedContentDialog = {
-        visible: false
-    };
+    $app.data.folderSelectorDialogVisible = false;
 
     $app.methods.setUGCFolderPath = async function (path) {
         await configRepository.setString('VRCX_userGeneratedContentPath', path);
@@ -20954,24 +18804,27 @@ console.log(`isLinux: ${LINUX}`);
         await AppApi.OpenUGCPhotosFolder(this.ugcFolderPath);
     };
 
-    $app.methods.openUGCFolderSelector = async function () {
-        var D = this.userGeneratedContentDialog;
-
-        if (D.visible) return;
-
-        D.visible = true;
-        var newUGCFolder;
-        if (LINUX) {
-            newUGCFolder = await window.electron.openDirectoryDialog();
-        } else {
-            newUGCFolder = await AppApi.OpenFolderSelectorDialog(
-                this.ugcFolderPath
-            );
+    $app.methods.folderSelectorDialog = async function (oldPath) {
+        if (this.folderSelectorDialogVisible) return;
+        if (!oldPath) {
+            oldPath = '';
         }
 
-        D.visible = false;
+        this.folderSelectorDialogVisible = true;
+        var newFolder = '';
+        if (LINUX) {
+            newFolder = await window.electron.openDirectoryDialog();
+        } else {
+            newFolder = await AppApi.OpenFolderSelectorDialog(oldPath);
+        }
 
-        await this.setUGCFolderPath(newUGCFolder);
+        this.folderSelectorDialogVisible = false;
+        return newFolder;
+    };
+
+    $app.methods.openUGCFolderSelector = async function () {
+        var path = await this.folderSelectorDialog(this.ugcFolderPath);
+        await this.setUGCFolderPath(path);
     };
 
     // avatar database provider
@@ -21040,55 +18893,6 @@ console.log(`isLinux: ${LINUX}`);
 
     // #endregion
     // #region | App: bulk unfavorite
-
-    $app.data.editFavoritesMode = false;
-
-    $app.methods.showBulkUnfavoriteSelectionConfirm = function () {
-        var elementsTicked = [];
-        // check favorites type
-        for (var ctx of this.favoriteFriends) {
-            if (ctx.$selected) {
-                elementsTicked.push(ctx.id);
-            }
-        }
-        for (var ctx of this.favoriteWorlds) {
-            if (ctx.$selected) {
-                elementsTicked.push(ctx.id);
-            }
-        }
-        for (var ctx of this.favoriteAvatars) {
-            if (ctx.$selected) {
-                elementsTicked.push(ctx.id);
-            }
-        }
-        if (elementsTicked.length === 0) {
-            return;
-        }
-        this.$confirm(
-            `Are you sure you want to unfavorite ${elementsTicked.length} favorites?
-            This action cannot be undone.`,
-            `Delete ${elementsTicked.length} favorites?`,
-            {
-                confirmButtonText: 'Confirm',
-                cancelButtonText: 'Cancel',
-                type: 'info',
-                callback: (action) => {
-                    if (action === 'confirm') {
-                        this.bulkUnfavoriteSelection(elementsTicked);
-                    }
-                }
-            }
-        );
-    };
-
-    $app.methods.bulkUnfavoriteSelection = function (elementsTicked) {
-        for (var id of elementsTicked) {
-            API.deleteFavorite({
-                objectId: id
-            });
-        }
-        this.editFavoritesMode = false;
-    };
 
     $app.methods.bulkCopyFavoriteSelection = function () {
         var idList = '';
@@ -21293,27 +19097,6 @@ console.log(`isLinux: ${LINUX}`);
         return favoriteGroup.length;
     };
 
-    $app.methods.promptNewLocalWorldFavoriteGroup = function () {
-        this.$prompt(
-            $t('prompt.new_local_favorite_group.description'),
-            $t('prompt.new_local_favorite_group.header'),
-            {
-                distinguishCancelAndClose: true,
-                confirmButtonText: $t('prompt.new_local_favorite_group.ok'),
-                cancelButtonText: $t('prompt.new_local_favorite_group.cancel'),
-                inputPattern: /\S+/,
-                inputErrorMessage: $t(
-                    'prompt.new_local_favorite_group.input_error'
-                ),
-                callback: (action, instance) => {
-                    if (action === 'confirm' && instance.inputValue) {
-                        this.newLocalWorldFavoriteGroup(instance.inputValue);
-                    }
-                }
-            }
-        );
-    };
-
     $app.methods.newLocalWorldFavoriteGroup = function (group) {
         if (this.localWorldFavoriteGroups.includes(group)) {
             $app.$message({
@@ -21331,35 +19114,6 @@ console.log(`isLinux: ${LINUX}`);
             this.localWorldFavoriteGroups.push(group);
         }
         this.sortLocalWorldFavorites();
-    };
-
-    $app.methods.promptLocalWorldFavoriteGroupRename = function (group) {
-        this.$prompt(
-            $t('prompt.local_favorite_group_rename.description'),
-            $t('prompt.local_favorite_group_rename.header'),
-            {
-                distinguishCancelAndClose: true,
-                confirmButtonText: $t(
-                    'prompt.local_favorite_group_rename.save'
-                ),
-                cancelButtonText: $t(
-                    'prompt.local_favorite_group_rename.cancel'
-                ),
-                inputPattern: /\S+/,
-                inputErrorMessage: $t(
-                    'prompt.local_favorite_group_rename.input_error'
-                ),
-                inputValue: group,
-                callback: (action, instance) => {
-                    if (action === 'confirm' && instance.inputValue) {
-                        this.renameLocalWorldFavoriteGroup(
-                            instance.inputValue,
-                            group
-                        );
-                    }
-                }
-            }
-        );
     };
 
     $app.methods.renameLocalWorldFavoriteGroup = function (newName, group) {
@@ -21380,19 +19134,6 @@ console.log(`isLinux: ${LINUX}`);
         delete this.localWorldFavorites[group];
         database.renameWorldFavoriteGroup(newName, group);
         this.sortLocalWorldFavorites();
-    };
-
-    $app.methods.promptLocalWorldFavoriteGroupDelete = function (group) {
-        this.$confirm(`Delete Group? ${group}`, 'Confirm', {
-            confirmButtonText: 'Confirm',
-            cancelButtonText: 'Cancel',
-            type: 'info',
-            callback: (action) => {
-                if (action === 'confirm') {
-                    this.deleteLocalWorldFavoriteGroup(group);
-                }
-            }
-        });
     };
 
     $app.methods.sortLocalWorldFavorites = function () {
@@ -21453,79 +19194,6 @@ console.log(`isLinux: ${LINUX}`);
     API.$on('LOGIN', function () {
         $app.getLocalWorldFavorites();
     });
-
-    $app.methods.refreshLocalWorldFavorites = async function () {
-        if (this.refreshingLocalFavorites) {
-            return;
-        }
-        this.refreshingLocalFavorites = true;
-        for (var worldId of this.localWorldFavoritesList) {
-            if (!this.refreshingLocalFavorites) {
-                break;
-            }
-            try {
-                await API.getWorld({
-                    worldId
-                });
-            } catch (err) {
-                console.error(err);
-            }
-            await new Promise((resolve) => {
-                workerTimers.setTimeout(resolve, 1000);
-            });
-        }
-        this.refreshingLocalFavorites = false;
-    };
-
-    $app.data.worldFavoriteSearch = '';
-    $app.data.worldFavoriteSearchResults = [];
-
-    $app.methods.searchWorldFavorites = function () {
-        var search = this.worldFavoriteSearch.toLowerCase();
-        if (search.length < 3) {
-            this.worldFavoriteSearchResults = [];
-            return;
-        }
-
-        var results = [];
-        for (var i = 0; i < this.localWorldFavoriteGroups.length; ++i) {
-            var group = this.localWorldFavoriteGroups[i];
-            if (!this.localWorldFavorites[group]) {
-                continue;
-            }
-            for (var j = 0; j < this.localWorldFavorites[group].length; ++j) {
-                var ref = this.localWorldFavorites[group][j];
-                if (!ref || !ref.id) {
-                    continue;
-                }
-                if (
-                    ref.name.toLowerCase().includes(search) ||
-                    ref.authorName.toLowerCase().includes(search)
-                ) {
-                    if (!results.some((r) => r.id == ref.id)) {
-                        results.push(ref);
-                    }
-                }
-            }
-        }
-
-        for (var i = 0; i < this.favoriteWorlds.length; ++i) {
-            var ref = this.favoriteWorlds[i].ref;
-            if (!ref) {
-                continue;
-            }
-            if (
-                ref.name.toLowerCase().includes(search) ||
-                ref.authorName.toLowerCase().includes(search)
-            ) {
-                if (!results.some((r) => r.id == ref.id)) {
-                    results.push(ref);
-                }
-            }
-        }
-
-        this.worldFavoriteSearchResults = results;
-    };
 
     // #endregion
     // #region | App: Local Avatar Favorites
@@ -21699,14 +19367,6 @@ console.log(`isLinux: ${LINUX}`);
             }
         }
         return false;
-    };
-
-    $app.methods.getLocalAvatarFavoriteGroupLength = function (group) {
-        var favoriteGroup = this.localAvatarFavorites[group];
-        if (!favoriteGroup) {
-            return 0;
-        }
-        return favoriteGroup.length;
     };
 
     $app.methods.promptNewLocalAvatarFavoriteGroup = function () {
@@ -21889,81 +19549,6 @@ console.log(`isLinux: ${LINUX}`);
         });
     };
 
-    $app.data.refreshingLocalFavorites = false;
-
-    $app.methods.refreshLocalAvatarFavorites = async function () {
-        if (this.refreshingLocalFavorites) {
-            return;
-        }
-        this.refreshingLocalFavorites = true;
-        for (var avatarId of this.localAvatarFavoritesList) {
-            if (!this.refreshingLocalFavorites) {
-                break;
-            }
-            try {
-                await API.getAvatar({
-                    avatarId
-                });
-            } catch (err) {
-                console.error(err);
-            }
-            await new Promise((resolve) => {
-                workerTimers.setTimeout(resolve, 1000);
-            });
-        }
-        this.refreshingLocalFavorites = false;
-    };
-
-    $app.data.avatarFavoriteSearch = '';
-    $app.data.avatarFavoriteSearchResults = [];
-
-    $app.methods.searchAvatarFavorites = function () {
-        var search = this.avatarFavoriteSearch.toLowerCase();
-        if (search.length < 3) {
-            this.avatarFavoriteSearchResults = [];
-            return;
-        }
-
-        var results = [];
-        for (var i = 0; i < this.localAvatarFavoriteGroups.length; ++i) {
-            var group = this.localAvatarFavoriteGroups[i];
-            if (!this.localAvatarFavorites[group]) {
-                continue;
-            }
-            for (var j = 0; j < this.localAvatarFavorites[group].length; ++j) {
-                var ref = this.localAvatarFavorites[group][j];
-                if (!ref || !ref.id) {
-                    continue;
-                }
-                if (
-                    ref.name.toLowerCase().includes(search) ||
-                    ref.authorName.toLowerCase().includes(search)
-                ) {
-                    if (!results.some((r) => r.id == ref.id)) {
-                        results.push(ref);
-                    }
-                }
-            }
-        }
-
-        for (var i = 0; i < this.favoriteAvatars.length; ++i) {
-            var ref = this.favoriteAvatars[i].ref;
-            if (!ref) {
-                continue;
-            }
-            if (
-                ref.name.toLowerCase().includes(search) ||
-                ref.authorName.toLowerCase().includes(search)
-            ) {
-                if (!results.some((r) => r.id == ref.id)) {
-                    results.push(ref);
-                }
-            }
-        }
-
-        this.avatarFavoriteSearchResults = results;
-    };
-
     // #endregion
     // #region | Local Favorite Friends
 
@@ -21974,15 +19559,14 @@ console.log(`isLinux: ${LINUX}`);
             '[]'
         )
     );
-
     $app.methods.updateLocalFavoriteFriends = function () {
         this.localFavoriteFriends.clear();
-        for (var ref of API.cachedFavorites.values()) {
+        for (const ref of API.cachedFavorites.values()) {
             if (
                 !ref.$isDeleted &&
                 ref.type === 'friend' &&
-                (this.localFavoriteFriendsGroups.length === 0 ||
-                    this.localFavoriteFriendsGroups.includes(ref.$groupKey))
+                (this.localFavoriteFriendsGroups.includes(ref.$groupKey) ||
+                    this.localFavoriteFriendsGroups.length === 0)
             ) {
                 this.localFavoriteFriends.add(ref.favoriteId);
             }
@@ -22082,6 +19666,14 @@ console.log(`isLinux: ${LINUX}`);
         );
     }
 
+    $app.methods.getLocalAvatarFavoriteGroupLength = function (group) {
+        var favoriteGroup = this.localAvatarFavorites[group];
+        if (!favoriteGroup) {
+            return 0;
+        }
+        return favoriteGroup.length;
+    };
+
     $app.methods.saveChatboxUserBlacklist = async function () {
         await configRepository.setString(
             'VRCX_chatboxUserBlacklist',
@@ -22146,19 +19738,21 @@ console.log(`isLinux: ${LINUX}`);
         }
         if (!API.queuedInstances.has(instanceId)) {
             var L = $utils.parseLocation(instanceId);
-            if (L.worldId && L.instanceId) {
-                API.getInstance({
-                    worldId: L.worldId,
-                    instanceId: L.instanceId
-                }).then((args) => {
-                    if (args.json?.queueSize) {
-                        $app.instanceQueueUpdate(
-                            instanceId,
-                            args.json?.queueSize,
-                            args.json?.queueSize
-                        );
-                    }
-                });
+            if (L.isRealInstance) {
+                instanceRequest
+                    .getInstance({
+                        worldId: L.worldId,
+                        instanceId: L.instanceId
+                    })
+                    .then((args) => {
+                        if (args.json?.queueSize) {
+                            $app.instanceQueueUpdate(
+                                instanceId,
+                                args.json?.queueSize,
+                                args.json?.queueSize
+                            );
+                        }
+                    });
             }
             $app.instanceQueueUpdate(instanceId, 0, 0);
         }
@@ -22273,7 +19867,7 @@ console.log(`isLinux: ${LINUX}`);
                 break;
             }
         }
-        return API.sendNotificationResponse({
+        return notificationRequest.sendNotificationResponse({
             notificationId,
             responseType,
             responseData
@@ -22532,6 +20126,7 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.data.appLanguage =
         (await configRepository.getString('VRCX_appLanguage')) ?? 'en';
+    $utils.changeCJKorder($app.data.appLanguage);
     i18n.locale = $app.data.appLanguage;
     $app.methods.initLanguage = async function () {
         if (!(await configRepository.getString('VRCX_appLanguage'))) {
@@ -22556,6 +20151,7 @@ console.log(`isLinux: ${LINUX}`);
     $app.methods.changeAppLanguage = function (language) {
         console.log('Language changed:', language);
         this.appLanguage = language;
+        $utils.changeCJKorder(language);
         i18n.locale = language;
         configRepository.setString('VRCX_appLanguage', language);
         this.applyLanguageStrings();
@@ -22572,7 +20168,7 @@ console.log(`isLinux: ${LINUX}`);
     });
 
     $app.methods.getCurrentUserFeedback = function () {
-        return API.getUserFeedback({ userId: API.currentUser.id });
+        return userRequest.getUserFeedback({ userId: API.currentUser.id });
     };
 
     $app.data.changeLogDialog = {
@@ -22619,7 +20215,7 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     $app.methods.reportUserForHacking = function (userId) {
-        API.reportUser({
+        miscRequest.reportUser({
             userId,
             contentType: 'user',
             reason: 'behavior-hacking',
@@ -22627,60 +20223,15 @@ console.log(`isLinux: ${LINUX}`);
         });
     };
 
-    /**
-    * @param {{
-            userId: string,
-            contentType: string,
-            reason: string,
-            type: string
-    }} params
-    * @return { Promise<{json: any, params}> }
-    */
-    API.reportUser = function (params) {
-        return this.call(`feedback/${params.userId}/user`, {
-            method: 'POST',
-            params: {
-                contentType: params.contentType,
-                reason: params.reason,
-                type: params.type
-            }
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FEEDBACK:REPORT:USER', args);
-            return args;
-        });
-    };
-
     $app.methods.changeLogRemoveLinks = function (text) {
         return text.replace(/([^!])\[[^\]]+\]\([^)]+\)/g, '$1');
     };
 
-    /**
-    * @param {{
-            fileId: string,
-            version: number
-    }} params
-    * @return { Promise<{json: any, params}> }
-
-    */
-    API.getFileAnalysis = function (params) {
-        return this.call(`analysis/${params.fileId}/${params.version}`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('FILE:ANALYSIS', args);
-            return args;
-        });
-    };
-
     API.$on('FILE:ANALYSIS', function (args) {
-        if (!$app.avatarDialog.visible) {
+        if (
+            !$app.avatarDialog.visible ||
+            $app.avatarDialog.id !== args.params.avatarId
+        ) {
             return;
         }
         var ref = args.json;
@@ -22702,14 +20253,12 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.getAvatarFileAnalysis = function () {
         var D = this.avatarDialog;
+        var avatarId = D.ref.id;
         var assetUrl = '';
+        var variant = 'security';
         for (let i = D.ref.unityPackages.length - 1; i > -1; i--) {
             var unityPackage = D.ref.unityPackages[i];
-            if (
-                unityPackage.variant &&
-                // unityPackage.variant !== 'standard' &&
-                unityPackage.variant !== 'security'
-            ) {
+            if (unityPackage.variant !== 'security') {
                 continue;
             }
             if (
@@ -22718,6 +20267,22 @@ console.log(`isLinux: ${LINUX}`);
             ) {
                 assetUrl = unityPackage.assetUrl;
                 break;
+            }
+        }
+        if (!assetUrl) {
+            for (let i = D.ref.unityPackages.length - 1; i > -1; i--) {
+                var unityPackage = D.ref.unityPackages[i];
+                if (unityPackage.variant !== 'standard') {
+                    continue;
+                }
+                if (
+                    unityPackage.platform === 'standalonewindows' &&
+                    this.compareUnityVersion(unityPackage.unitySortNumber)
+                ) {
+                    variant = 'standard';
+                    assetUrl = unityPackage.assetUrl;
+                    break;
+                }
             }
         }
         if (!assetUrl) {
@@ -22732,7 +20297,7 @@ console.log(`isLinux: ${LINUX}`);
             });
             return;
         }
-        API.getFileAnalysis({ fileId, version });
+        miscRequest.getFileAnalysis({ fileId, version, variant, avatarId });
     };
 
     $app.methods.openFolderGeneric = function (path) {
@@ -22851,20 +20416,8 @@ console.log(`isLinux: ${LINUX}`);
         this.currentUser.$vrchatcredits = args.json?.balance;
     });
 
-    API.getVRChatCredits = function () {
-        return this.call(`user/${this.currentUser.id}/balance`, {
-            method: 'GET'
-        }).then((json) => {
-            var args = {
-                json
-            };
-            this.$emit('VRCCREDITS', args);
-            return args;
-        });
-    };
-
     $app.methods.getVRChatCredits = function () {
-        API.getVRChatCredits();
+        miscRequest.getVRChatCredits();
     };
 
     // #endregion
@@ -22882,33 +20435,10 @@ console.log(`isLinux: ${LINUX}`);
                     if (action !== 'confirm') {
                         return;
                     }
-                    API.closeInstance({ location, hardClose: false });
+                    miscRequest.closeInstance({ location, hardClose: false });
                 }
             }
         );
-    };
-
-    /**
-    * @param {{
-            location: string,
-            hardClose: boolean
-    }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.closeInstance = function (params) {
-        return this.call(`instances/${params.location}`, {
-            method: 'DELETE',
-            params: {
-                hardClose: params.hardClose ?? false
-            }
-        }).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('INSTANCE:CLOSE', args);
-            return args;
-        });
     };
 
     API.$on('INSTANCE:CLOSE', function (args) {
@@ -22969,50 +20499,6 @@ console.log(`isLinux: ${LINUX}`);
 
     // #region persistent data
 
-    /**
-    * @param {{
-            worldId: string
-    }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.deleteWorldPersistData = function (params) {
-        return this.call(
-            `users/${this.currentUser.id}/${params.worldId}/persist`,
-            {
-                method: 'DELETE'
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLD:PERSIST:DELETE', args);
-            return args;
-        });
-    };
-
-    /**
-    * @param {{
-            worldId: string
-    }} params
-     * @returns {Promise<{json: any, params}>}
-     */
-    API.hasWorldPersistData = function (params) {
-        return this.call(
-            `users/${this.currentUser.id}/${params.worldId}/persist/exists`,
-            {
-                method: 'GET'
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('WORLD:PERSIST:HAS', args);
-            return args;
-        });
-    };
-
     API.$on('WORLD:PERSIST:HAS', function (args) {
         if (
             args.params.worldId === $app.worldDialog.id &&
@@ -23051,44 +20537,24 @@ console.log(`isLinux: ${LINUX}`);
 
     $app.methods.saveWorldAllowedDomains = function () {
         var D = this.worldAllowedDomainsDialog;
-        API.saveWorld({
-            id: D.worldId,
-            urlList: D.urlList
-        }).then((args) => {
-            this.$message({
-                message: 'Allowed Video Player Domains updated',
-                type: 'success'
+        worldRequest
+            .saveWorld({
+                id: D.worldId,
+                urlList: D.urlList
+            })
+            .then((args) => {
+                this.$message({
+                    message: 'Allowed Video Player Domains updated',
+                    type: 'success'
+                });
+                return args;
             });
-            return args;
-        });
         D.visible = false;
     };
 
     $app.data.ossDialog = false;
 
     // #region | App: Badges
-
-    API.updateBadge = function (params) {
-        return this.call(
-            `users/${API.currentUser.id}/badges/${params.badgeId}`,
-            {
-                method: 'PUT',
-                params: {
-                    userId: API.currentUser.id,
-                    badgeId: params.badgeId,
-                    hidden: params.hidden,
-                    showcased: params.showcased
-                }
-            }
-        ).then((json) => {
-            var args = {
-                json,
-                params
-            };
-            this.$emit('BADGE:UPDATE', args);
-            return args;
-        });
-    };
 
     API.$on('BADGE:UPDATE', function (args) {
         if (args.json) {
@@ -23103,7 +20569,7 @@ console.log(`isLinux: ${LINUX}`);
         if (badge.hidden) {
             badge.showcased = false;
         }
-        API.updateBadge({
+        miscRequest.updateBadge({
             badgeId: badge.badgeId,
             hidden: badge.hidden,
             showcased: badge.showcased
@@ -23114,7 +20580,7 @@ console.log(`isLinux: ${LINUX}`);
         if (badge.showcased) {
             badge.hidden = false;
         }
-        API.updateBadge({
+        miscRequest.updateBadge({
             badgeId: badge.badgeId,
             hidden: badge.hidden,
             showcased: badge.showcased
@@ -23126,92 +20592,207 @@ console.log(`isLinux: ${LINUX}`);
     };
 
     // friendsListSidebar
-    //  - SidebarGroupByInstance
 
-    $app.methods.handleSwitchGroupByInstance = async function () {
-        this.isSidebarGroupByInstance = !this.isSidebarGroupByInstance;
+    //  - DivideByFriendGroup
+
+    $app.data.isSidebarDivideByFriendGroup = await configRepository.getBool(
+        'VRCX_sidebarDivideByFriendGroup',
+        true
+    );
+
+    $app.methods.handleSwitchDivideByFriendGroup = async function () {
+        this.isSidebarDivideByFriendGroup = !this.isSidebarDivideByFriendGroup;
         await configRepository.setBool(
-            'VRCX_sidebarGroupByInstance',
-            this.isSidebarGroupByInstance
+            'VRCX_sidebarDivideByFriendGroup',
+            this.isSidebarDivideByFriendGroup
         );
     };
+
+    //  - SidebarGroupByInstance
 
     $app.data.isSidebarGroupByInstance = await configRepository.getBool(
         'VRCX_sidebarGroupByInstance',
         true
     );
-    $app.computed.onlineFriendsInSameInstance = function () {
-        const groupedItems = {};
 
-        this.onlineFriends.forEach((item) => {
-            const key = item.ref?.$location.tag;
-            if (!key || key === 'private' || key === 'offline') return;
-            if (!groupedItems[key]) {
-                groupedItems[key] = [];
-            }
-            groupedItems[key].push(item);
-        });
-
-        const sortedGroups = [];
-        for (const group of Object.values(groupedItems)) {
-            if (group.length > 1) {
-                sortedGroups.push(
-                    group.sort(
-                        (a, b) => a.ref?.$location_at - b.ref?.$location_at
-                    )
-                );
-            }
-        }
-
-        return sortedGroups.sort((a, b) => b.length - a.length);
-    };
-
-    $app.computed.onlineFriendsNotInSameInstance = function () {
-        const friendsInSameInstance = new Set(
-            this.onlineFriendsInSameInstance.flat().map((friend) => friend.id)
-        );
-
-        return this.onlineFriends.filter(
-            (friend) => !friendsInSameInstance.has(friend.id)
+    $app.methods.toggleGroupByInstance = function () {
+        this.isSidebarGroupByInstance = !this.isSidebarGroupByInstance;
+        configRepository.setBool(
+            'VRCX_sidebarGroupByInstance',
+            this.isSidebarGroupByInstance
         );
     };
 
-    $app.computed.vipFriendsInSameInstance = function () {
-        const groupedItems = {};
+    $app.data.isHideFriendsInSameInstance = await configRepository.getBool(
+        'VRCX_hideFriendsInSameInstance',
+        false
+    );
 
-        this.vipFriends.forEach((item) => {
-            const key = item.ref?.$location.tag;
-            if (!key || key === 'private' || key === 'offline') return;
-            if (!groupedItems[key]) {
-                groupedItems[key] = [];
-            }
-            groupedItems[key].push(item);
-        });
-
-        const sortedGroups = [];
-        for (const group of Object.values(groupedItems)) {
-            if (group.length > 1) {
-                sortedGroups.push(
-                    group.sort(
-                        (a, b) => a.ref?.$location_at - b.ref?.$location_at
-                    )
-                );
-            }
-        }
-
-        return sortedGroups.sort((a, b) => b.length - a.length);
-    };
-
-    $app.computed.vipFriendsNotInSameInstance = function () {
-        const friendsInSameInstance = new Set(
-            this.vipFriendsInSameInstance.flat().map((friend) => friend.id)
-        );
-
-        return this.vipFriends.filter(
-            (friend) => !friendsInSameInstance.has(friend.id)
+    $app.methods.toggleHideFriendsInSameInstance = function () {
+        this.isHideFriendsInSameInstance = !this.isHideFriendsInSameInstance;
+        configRepository.setBool(
+            'VRCX_hideFriendsInSameInstance',
+            this.isHideFriendsInSameInstance
         );
     };
 
+    $app.methods.getSmallThumbnailUrl = function (url, resolution = 64) {
+        return (
+            url
+                ?.replace('/file/', '/image/')
+                .replace('/1/file', `/1/${resolution}`) || url
+        );
+    };
+
+    // #endregion
+
+    // #region | Tab Props
+
+    $app.computed.moderationTabBind = function () {
+        return {
+            menuActiveIndex: this.menuActiveIndex,
+            tableData: this.playerModerationTable,
+            shiftHeld: this.shiftHeld,
+            hideTooltips: this.hideTooltips
+        };
+    };
+
+    $app.computed.friendsListTabBind = function () {
+        return {
+            menuActiveIndex: this.menuActiveIndex,
+            friends: this.friends,
+            hideTooltips: this.hideTooltips,
+            randomUserColours: this.randomUserColours,
+            sortStatus: this.sortStatus,
+            languageClass: this.languageClass,
+            confirmDeleteFriend: this.confirmDeleteFriend,
+            friendsListSearch: this.friendsListSearch,
+            stringComparer: this.stringComparer
+        };
+    };
+    $app.computed.friendsListTabEvent = function () {
+        return {
+            'get-all-user-stats': this.getAllUserStats,
+            'lookup-user': this.lookupUser,
+            'update:friends-list-search': (value) =>
+                (this.friendsListSearch = value)
+        };
+    };
+
+    $app.computed.sideBarTabBind = function () {
+        return {
+            isSideBarTabShow: this.isSideBarTabShow,
+            style: { width: `${this.asideWidth}px` },
+            vipFriends: this.vipFriends,
+            onlineFriends: this.onlineFriends,
+            quickSearchRemoteMethod: this.quickSearchRemoteMethod,
+            quickSearchItems: this.quickSearchItems,
+            hideTooltips: this.hideTooltips,
+            onlineFriendCount: this.onlineFriendCount,
+            friends: this.friends,
+            isGameRunning: this.isGameRunning,
+            isSidebarDivideByFriendGroup: this.isSidebarDivideByFriendGroup,
+            isSidebarGroupByInstance: this.isSidebarGroupByInstance,
+            isHideFriendsInSameInstance: this.isHideFriendsInSameInstance,
+            gameLogDisabled: this.gameLogDisabled,
+            lastLocation: this.lastLocation,
+            lastLocationDestination: this.lastLocationDestination,
+            hideNicknames: this.hideNicknames,
+            activeFriends: this.activeFriends,
+            offlineFriends: this.offlineFriends,
+            groupInstances: this.groupInstances,
+            inGameGroupOrder: this.inGameGroupOrder,
+            groupedByGroupKeyFavoriteFriends:
+                this.groupedByGroupKeyFavoriteFriends
+        };
+    };
+
+    $app.computed.sideBarTabEvent = function () {
+        return {
+            'show-group-dialog': this.showGroupDialog,
+            'quick-search-change': this.quickSearchChange,
+            'direct-access-paste': this.directAccessPaste,
+            'refresh-friends-list': this.refreshFriendsList,
+            'confirm-delete-friend': this.confirmDeleteFriend
+        };
+    };
+
+    $app.computed.isSideBarTabShow = function () {
+        return !(
+            this.menuActiveIndex === 'friendsList' ||
+            this.menuActiveIndex === 'charts'
+        );
+    };
+
+    $app.computed.favoritesTabBind = function () {
+        return {
+            menuActiveIndex: this.menuActiveIndex,
+            hideTooltips: this.hideTooltips,
+            shiftHeld: this.shiftHeld,
+            favoriteFriends: this.favoriteFriends,
+            sortFavorites: this.sortFavorites,
+            groupedByGroupKeyFavoriteFriends:
+                this.groupedByGroupKeyFavoriteFriends,
+            favoriteWorlds: this.favoriteWorlds,
+            localWorldFavoriteGroups: this.localWorldFavoriteGroups,
+            localWorldFavorites: this.localWorldFavorites,
+            avatarHistoryArray: this.avatarHistoryArray,
+            localAvatarFavoriteGroups: this.localAvatarFavoriteGroups,
+            localAvatarFavorites: this.localAvatarFavorites,
+            favoriteAvatars: this.favoriteAvatars,
+            localAvatarFavoritesList: this.localAvatarFavoritesList,
+            localWorldFavoritesList: this.localWorldFavoritesList
+        };
+    };
+
+    $app.computed.favoritesTabEvent = function () {
+        return {
+            'update:sort-favorites': (value) => (this.sortFavorites = value),
+            'clear-bulk-favorite-selection': this.clearBulkFavoriteSelection,
+            'bulk-copy-favorite-selection': this.bulkCopyFavoriteSelection,
+            'get-local-world-favorites': this.getLocalWorldFavorites,
+            'show-friend-import-dialog': this.showFriendImportDialog,
+            'save-sort-favorites-option': this.saveSortFavoritesOption,
+            'show-world-import-dialog': this.showWorldImportDialog,
+            'show-world-dialog': this.showWorldDialog,
+            'new-instance-self-invite': this.newInstanceSelfInvite,
+            'show-favorite-dialog': this.showFavoriteDialog,
+            'delete-local-world-favorite-group':
+                this.deleteLocalWorldFavoriteGroup,
+            'remove-local-world-favorite': this.removeLocalWorldFavorite,
+            'show-avatar-import-dialog': this.showAvatarImportDialog,
+            'show-avatar-dialog': this.showAvatarDialog,
+            'remove-local-avatar-favorite': this.removeLocalAvatarFavorite,
+            'select-avatar-with-confirmation':
+                this.selectAvatarWithConfirmation,
+            'prompt-clear-avatar-history': this.promptClearAvatarHistory,
+            'prompt-new-local-avatar-favorite-group':
+                this.promptNewLocalAvatarFavoriteGroup,
+            'prompt-local-avatar-favorite-group-rename':
+                this.promptLocalAvatarFavoriteGroupRename,
+            'prompt-local-avatar-favorite-group-delete':
+                this.promptLocalAvatarFavoriteGroupDelete,
+            'new-local-world-favorite-group': this.newLocalWorldFavoriteGroup,
+            'rename-local-world-favorite-group':
+                this.renameLocalWorldFavoriteGroup
+        };
+    };
+
+    $app.computed.chartsTabBind = function () {
+        return {
+            getWorldName: this.getWorldName,
+            isDarkMode: this.isDarkMode,
+            dtHour12: this.dtHour12,
+            friendsMap: this.friends,
+            localFavoriteFriends: this.localFavoriteFriends
+        };
+    };
+    $app.computed.chartsTabEvent = function () {
+        return {
+            'open-previous-instance-info-dialog':
+                this.showPreviousInstanceInfoDialog
+        };
+    };
     // #endregion
 
     // #region | Electron
